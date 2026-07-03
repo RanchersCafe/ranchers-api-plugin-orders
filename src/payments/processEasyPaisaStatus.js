@@ -16,12 +16,7 @@ function transactionQuery(orderId, paymentAttemptId) {
 }
 
 export async function processEasyPaisaStatus(
-  {
-    statusUrl,
-    allowedHosts,
-    OrdersDb,
-    TransactionDb,
-  },
+  { statusUrl, allowedHosts, OrdersDb, TransactionDb },
   dependencies = {}
 ) {
   if (!OrdersDb || !TransactionDb) {
@@ -42,7 +37,8 @@ export async function processEasyPaisaStatus(
   const providerData = response?.data || {};
   const externalOrderId = providerData.optional1;
   const paymentAttemptId = providerData.optional2;
-  const orderId = decoder(externalOrderId);
+  const decodedOrderId = decoder(externalOrderId);
+  const orderId = decodedOrderId?.id || decodedOrderId;
 
   if (!orderId || !paymentAttemptId) {
     const error = new Error("Payment status is missing order references");
@@ -83,27 +79,24 @@ export async function processEasyPaisaStatus(
   const outcome = evaluateStatusResponse(providerData, expectedAmount);
   const now = clock.now();
 
-  await TransactionDb.updateOne(
-    attemptQuery,
-    {
-      $set: {
-        providerStatus: outcome.providerStatus,
-        status: outcome.status,
-        responseCode: outcome.responseCode,
-        responseMessage: outcome.description,
-        transactionId: outcome.providerTransactionId,
-        verifiedAmount: outcome.paidAmount,
-        amountMatches: outcome.amountMatches,
-        transactionDateTime: outcome.paidAt,
-        lastVerifiedAt: now,
-        nextReconciliationAt:
-          outcome.status === PAYMENT_STATUS.PENDING_VERIFICATION
-            ? attempt.nextReconciliationAt || now
-            : null,
-        updatedAt: now,
-      },
-    }
-  );
+  await TransactionDb.updateOne(attemptQuery, {
+    $set: {
+      providerStatus: outcome.providerStatus,
+      status: outcome.status,
+      responseCode: outcome.responseCode,
+      responseMessage: outcome.description,
+      transactionId: outcome.providerTransactionId,
+      verifiedAmount: outcome.paidAmount,
+      amountMatches: outcome.amountMatches,
+      transactionDateTime: outcome.paidAt,
+      lastVerifiedAt: now,
+      nextReconciliationAt:
+        outcome.status === PAYMENT_STATUS.PENDING_VERIFICATION
+          ? attempt.nextReconciliationAt || now
+          : null,
+      updatedAt: now,
+    },
+  });
 
   const orderUpdate = {
     paymentStatus: outcome.status,
