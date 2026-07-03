@@ -33,6 +33,7 @@
     "axios": "^1.7.9",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
+    "graphql-subscriptions": "^1.2.1",
     "lodash": "^4.17.21",
     "mongodb": "^3.7.4",
     "morgan": "^1.10.0",
@@ -70,6 +71,7 @@
     "lint": "npm run lint:eslint",
     "lint:eslint": "eslint .",
     "test": "jest",
+    "test:payments": "node tests/run.mjs",
     "test:watch": "jest --watch",
     "test:file": "jest --no-cache --watch --coverage=false"
   },
