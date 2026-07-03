@@ -38,6 +38,20 @@ export default async function register(app) {
             { branchID: 1, "workflow.status": 1, createdAt: -1 },
             { name: "orders_branch_status_createdAt" },
           ],
+          [
+            { checkoutClientMutationId: 1 },
+            { name: "orders_checkout_client_mutation", sparse: true },
+          ],
+        ],
+      },
+      CheckoutRequest: {
+        name: "CheckoutRequest",
+        updatedAt: { type: Date, default: Date.now },
+        createdAt: { type: Date, default: Date.now },
+        indexes: [
+          [{ checkoutKey: 1 }, { name: "checkout_request_key", unique: true }],
+          [{ status: 1, lockExpiresAt: 1 }, { name: "checkout_request_lock" }],
+          [{ createdAt: 1 }, { name: "checkout_request_created" }],
         ],
       },
       CartHistory: {
