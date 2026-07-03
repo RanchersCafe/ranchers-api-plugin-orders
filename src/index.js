@@ -340,7 +340,7 @@ export default async function register(app) {
         createdAt: { type: Date, default: Date.now },
         indexes: [
           [{ orderId: 1, createdAt: -1 }, { name: "transaction_order_createdAt" }],
-          [{ transactionId: 1 }, { name: "transaction_provider_id", unique: true, sparse: true }],
+          [{ transactionId: 1 }, { name: "transaction_provider_id", sparse: true }],
           [{ idempotencyKey: 1 }, { name: "transaction_idempotency", unique: true, sparse: true }],
           [{ status: 1, createdAt: 1 }, { name: "transaction_status_createdAt" }],
         ],
