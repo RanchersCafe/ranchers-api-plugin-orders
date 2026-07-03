@@ -117,7 +117,10 @@ export async function runEasyPaisaIntegrationTests() {
     assert.equal(attempt.status, PAYMENT_STATUS.PENDING_VERIFICATION);
     assert.equal(attempt.attemptCount, 1);
     assert.equal(attempt.processingLockToken, undefined);
-    assert.equal(events.map((event) => event.status).join(","), "PENDING,PENDING_VERIFICATION");
+    assert.equal(
+      events.map((event) => event.status).join(","),
+      "PENDING,PENDING_VERIFICATION"
+    );
   }
 
   {
@@ -240,6 +243,6 @@ export async function runEasyPaisaIntegrationTests() {
     assert.equal(order.paymentStatus, PAYMENT_STATUS.FAILED);
     const attempt = await TransactionDb.findOne({ orderId: "order-1" });
     assert.equal(attempt.status, PAYMENT_STATUS.FAILED);
-    assert.equal(attempt.nextReconciliationAt, null);
+    assert.ok(attempt.nextReconciliationAt == null);
   }
 }
