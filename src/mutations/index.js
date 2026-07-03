@@ -2,7 +2,7 @@ import addOrderFulfillmentGroup from "./addOrderFulfillmentGroup.js";
 import cancelOrderItem from "./cancelOrderItem.js";
 import createRefund from "./createRefund.js";
 import moveOrderItems from "./moveOrderItems.js";
-import placeOrder from "./placeOrder.js";
+import placeOrder from "./placeOrderGuarded.js";
 import favoriteOrder from "./favoriteOrder.js";
 import removeFavoriteOrder from "./removeFavoriteOrder.js";
 import sendOrderEmail from "./sendOrderEmail.js";
@@ -14,6 +14,7 @@ import sendWhatsAppMessage from "./sendWhatsAppMessage.js";
 import testNewOrderEvent from "./testNewOrderEvent.js";
 import convertOrderToCash from "./convertOrderToCash.js";
 import reattemptEasyPaisaPayment from "./reattemptEasyPaisaPayment.js";
+
 export default {
   addOrderFulfillmentGroup,
   cancelOrderItem,
@@ -30,5 +31,5 @@ export default {
   removeFavoriteOrder,
   testNewOrderEvent,
   convertOrderToCash,
-  reattemptEasyPaisaPayment
+  reattemptEasyPaisaPayment,
 };
