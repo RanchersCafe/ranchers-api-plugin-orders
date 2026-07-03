@@ -1,10 +1,9 @@
 import axios from "axios";
 import { randomBytes } from "crypto";
-import ReactionError from "@reactioncommerce/reaction-error";
 import mongodb from "mongodb";
-import decodeOpaqueId from "@reactioncommerce/api-utils/decodeOpaqueId.js";
-import pubSub from "./pubSubIntance.js";
-import { PAYMENT_STATUS } from "./paymentStatus.js";
+import ReactionError from "@reactioncommerce/reaction-error";
+import decodeOrderReference from "../payments/decodeOrderReference.js";
+import publishPaymentStatus from "../payments/publishPaymentStatus.js";
 import {
   buildIdempotencyKey,
   getOrderInvoiceTotal,
@@ -15,76 +14,19 @@ import {
   isUncertainProviderError,
   validateAuthHeaderName,
 } from "../payments/easypaisaProtocol.js";
+import { PAYMENT_STATUS } from "./paymentStatus.js";
 
 const { ObjectId } = mongodb;
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_LOCK_TTL_MS = 30000;
 const DEFAULT_RECONCILIATION_DELAY_MS = 5 * 60 * 1000;
 
-function decodeOrderId(value) {
-  if (!value) return null;
-  try {
-    return decodeOpaqueId(value)?.id || value;
-  } catch (error) {
-    return value;
-  }
-}
-
-function getAttemptQuery(orderId, attemptId) {
-  const query = { orderId };
-  if (attemptId && ObjectId.isValid(attemptId)) {
-    query._id = new ObjectId(attemptId);
-  }
-  return query;
-}
-
-function defaultPublishStatus({
-  branchId,
-  externalOrderId,
-  orderId,
-  status,
-  isPaid,
-  initiatedAt,
-}) {
-  const event = {
-    orderId,
-    paymentStatus: status,
-    updatedAt: new Date(),
-    paymentMethod: "EASYPAISA",
-    isPaid,
-    paymentInitiatedAt: initiatedAt,
-  };
-
-  if (branchId) {
-    pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${branchId}`, {
-      orderPaymentStatusUpdated: event,
-    });
-  }
-
-  if (externalOrderId) {
-    pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${externalOrderId}`, {
-      orderPaymentStatusUpdated: {
-        ...event,
-        orderId: externalOrderId,
-      },
-    });
-  }
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function readConfiguration(overrides = {}) {
-  const timeoutMs = Number.parseInt(
-    String(overrides.timeoutMs ?? process.env.EASYPAISA_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
-    10
-  );
-  const lockTtlMs = Number.parseInt(
-    String(overrides.lockTtlMs ?? DEFAULT_LOCK_TTL_MS),
-    10
-  );
-  const reconciliationDelayMs = Number.parseInt(
-    String(overrides.reconciliationDelayMs ?? DEFAULT_RECONCILIATION_DELAY_MS),
-    10
-  );
-
   return {
     authHeader: validateAuthHeaderName(
       overrides.authHeader ?? process.env.EASYPAISA_AUTH_HEADER ?? "Credentials"
@@ -96,43 +38,53 @@ function readConfiguration(overrides = {}) {
         process.env.EASYPAISA_BASE_URL ??
         "https://easypay.easypaisa.com.pk/easypay-service/rest/v4"
     ).replace(/\/$/, ""),
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS,
-    lockTtlMs: Number.isFinite(lockTtlMs) && lockTtlMs > 0 ? lockTtlMs : DEFAULT_LOCK_TTL_MS,
-    reconciliationDelayMs:
-      Number.isFinite(reconciliationDelayMs) && reconciliationDelayMs > 0
-        ? reconciliationDelayMs
-        : DEFAULT_RECONCILIATION_DELAY_MS,
+    timeoutMs: positiveInteger(
+      overrides.timeoutMs ?? process.env.EASYPAISA_TIMEOUT_MS,
+      DEFAULT_TIMEOUT_MS
+    ),
+    lockTtlMs: positiveInteger(overrides.lockTtlMs, DEFAULT_LOCK_TTL_MS),
+    reconciliationDelayMs: positiveInteger(
+      overrides.reconciliationDelayMs,
+      DEFAULT_RECONCILIATION_DELAY_MS
+    ),
   };
 }
 
-async function claimPaymentAttempt({
+function getAttemptQuery(orderId, paymentAttemptId) {
+  const query = { orderId };
+  if (paymentAttemptId && ObjectId.isValid(paymentAttemptId)) {
+    query._id = new ObjectId(paymentAttemptId);
+  }
+  return query;
+}
+
+async function claimAttempt({
   TransactionDb,
-  attemptQuery,
+  query,
   idempotencyKey,
   amount,
   submittedAmount,
+  lockToken,
   now,
   lockTtlMs,
-  lockToken,
 }) {
   if (!TransactionDb) return { claimed: true, attempt: null };
 
-  const existing = await TransactionDb.findOne(attemptQuery);
+  const existing = await TransactionDb.findOne(query);
   if (existing?.status === PAYMENT_STATUS.VERIFIED_PAID) {
     return { claimed: false, terminal: true, attempt: existing };
   }
 
-  const lockExpiresAt = new Date(now.getTime() + lockTtlMs);
   const update = {
     $set: {
       idempotencyKey,
+      provider: "EASYPAISA",
       amount,
       submittedAmount,
       submittedAmountMismatch: Math.abs(amount - submittedAmount) >= 0.01,
-      provider: "EASYPAISA",
       status: PAYMENT_STATUS.PENDING,
       processingLockToken: lockToken,
-      processingLockExpiresAt: lockExpiresAt,
+      processingLockExpiresAt: new Date(now.getTime() + lockTtlMs),
       initiatedAt: existing?.initiatedAt || now,
       lastAttemptAt: now,
       updatedAt: now,
@@ -140,83 +92,105 @@ async function claimPaymentAttempt({
     $inc: { attemptCount: 1 },
   };
 
-  if (typeof TransactionDb.findOneAndUpdate === "function") {
-    const result = await TransactionDb.findOneAndUpdate(
-      {
-        ...attemptQuery,
-        status: { $ne: PAYMENT_STATUS.VERIFIED_PAID },
-        $or: [
-          { processingLockExpiresAt: { $exists: false } },
-          { processingLockExpiresAt: null },
-          { processingLockExpiresAt: { $lte: now } },
-        ],
-      },
-      update,
-      { returnOriginal: false }
-    );
-
-    const attempt = result?.value || null;
-    if (!attempt) {
-      return {
-        claimed: false,
-        terminal: false,
-        attempt: await TransactionDb.findOne(attemptQuery),
-      };
-    }
-    return { claimed: true, attempt };
+  if (typeof TransactionDb.findOneAndUpdate !== "function") {
+    await TransactionDb.updateOne(query, update);
+    return { claimed: true, attempt: await TransactionDb.findOne(query) };
   }
 
-  await TransactionDb.updateOne(attemptQuery, update);
-  return { claimed: true, attempt: await TransactionDb.findOne(attemptQuery) };
-}
-
-async function updateAttempt(TransactionDb, attemptQuery, values, lockToken, now) {
-  if (!TransactionDb) return;
-  const query = lockToken
-    ? { ...attemptQuery, processingLockToken: lockToken }
-    : attemptQuery;
-
-  await TransactionDb.updateOne(query, {
-    $set: { ...values, updatedAt: now },
-    $unset: {
-      processingLockToken: "",
-      processingLockExpiresAt: "",
+  const result = await TransactionDb.findOneAndUpdate(
+    {
+      ...query,
+      status: { $ne: PAYMENT_STATUS.VERIFIED_PAID },
+      $or: [
+        { processingLockExpiresAt: { $exists: false } },
+        { processingLockExpiresAt: null },
+        { processingLockExpiresAt: { $lte: now } },
+      ],
     },
-  });
+    update,
+    { returnOriginal: false }
+  );
+
+  if (result?.value) return { claimed: true, attempt: result.value };
+  return {
+    claimed: false,
+    terminal: false,
+    attempt: await TransactionDb.findOne(query),
+  };
 }
 
-async function updateOrderPayment({
+async function persistAttempt(TransactionDb, query, lockToken, values, now) {
+  if (!TransactionDb) return;
+  await TransactionDb.updateOne(
+    lockToken ? { ...query, processingLockToken: lockToken } : query,
+    {
+      $set: { ...values, updatedAt: now },
+      $unset: {
+        processingLockToken: "",
+        processingLockExpiresAt: "",
+      },
+    }
+  );
+}
+
+async function persistOrder({
   OrdersDb,
   orderId,
+  amount,
   status,
   isPaid,
-  amount,
   transactionId,
   initiatedAt,
   verifiedAt,
   now,
 }) {
-  const setValues = {
+  const values = {
     paymentStatus: status,
     authoritativePaymentAmount: amount,
     "payments.0.finalAmount": amount,
+    isPaid: Boolean(isPaid),
     updatedAt: now,
   };
-
-  if (initiatedAt) setValues.paymentInitiatedAt = initiatedAt;
-  if (transactionId) setValues.transactionId = transactionId;
-  if (verifiedAt) setValues.paymentVerifiedAt = verifiedAt;
-
-  if (isPaid) {
-    setValues.isPaid = true;
-  } else {
-    setValues.isPaid = false;
-  }
+  if (initiatedAt) values.paymentInitiatedAt = initiatedAt;
+  if (transactionId) values.transactionId = transactionId;
+  if (verifiedAt) values.paymentVerifiedAt = verifiedAt;
 
   await OrdersDb.updateOne(
     isPaid ? { _id: orderId } : { _id: orderId, isPaid: { $ne: true } },
-    { $set: setValues }
+    { $set: values }
   );
+}
+
+async function persistStatus({
+  TransactionDb,
+  OrdersDb,
+  attemptQuery,
+  lockToken,
+  orderId,
+  amount,
+  status,
+  transactionId,
+  attemptValues,
+  initiatedAt,
+  now,
+}) {
+  await persistAttempt(
+    TransactionDb,
+    attemptQuery,
+    lockToken,
+    { ...attemptValues, status, isPaid: false },
+    now
+  );
+  await persistOrder({
+    OrdersDb,
+    orderId,
+    amount,
+    status,
+    isPaid: false,
+    transactionId,
+    initiatedAt,
+    now,
+  });
 }
 
 export async function initiateEasyPaisaPayment(params, dependencies = {}) {
@@ -233,32 +207,26 @@ export async function initiateEasyPaisaPayment(params, dependencies = {}) {
     OrdersDb,
   } = params;
 
-  if (!OrdersDb) {
-    throw new TypeError("OrdersDb is required");
-  }
-
-  const httpClient = dependencies.httpClient || axios;
-  const clock = dependencies.clock || { now: () => new Date() };
-  const publishStatus = dependencies.publishStatus || defaultPublishStatus;
-  const createLockToken =
-    dependencies.createLockToken || (() => randomBytes(16).toString("hex"));
-  const config = readConfiguration({
-    ...dependencies.config,
-    storeId: storeId || dependencies.config?.storeId,
-  });
-
-  const normalizedSubmittedAmount = positiveMoney(submittedAmount);
-  if (normalizedSubmittedAmount === null) {
+  if (!OrdersDb) throw new TypeError("OrdersDb is required");
+  const submitted = positiveMoney(submittedAmount);
+  if (submitted === null) {
     throw new ReactionError("invalid-payment", "A valid transaction amount is required");
   }
   if (!mobileAccountNo) {
     throw new ReactionError("invalid-payment", "A mobile account number is required");
   }
+
+  const config = readConfiguration({
+    ...dependencies.config,
+    storeId: storeId || dependencies.config?.storeId,
+  });
   if (!config.authValue || !config.storeId) {
     throw new ReactionError("payment-configuration", "EasyPaisa is not configured");
   }
 
-  const orderId = decodeOrderId(externalOrderId);
+  const orderId = (dependencies.decodeOrderReference || decodeOrderReference)(
+    externalOrderId
+  );
   if (!orderId) {
     throw new ReactionError("invalid-payment", "A valid order reference is required");
   }
@@ -267,58 +235,74 @@ export async function initiateEasyPaisaPayment(params, dependencies = {}) {
   if (!order) {
     throw new ReactionError("not-found", "Order not found while initiating payment");
   }
+  if (order.isPaid === true || order.paymentStatus === PAYMENT_STATUS.VERIFIED_PAID) {
+    return {
+      status: PAYMENT_STATUS.VERIFIED_PAID,
+      transactionId: order.transactionId || null,
+      isPaid: true,
+      idempotent: true,
+    };
+  }
 
   const amount = getOrderInvoiceTotal(order);
   if (amount === null) {
     throw new ReactionError("invalid-payment", "The order does not have a valid payable amount");
   }
 
+  const clock = dependencies.clock || { now: () => new Date() };
+  const httpClient = dependencies.httpClient || axios;
+  const publishStatus = dependencies.publishStatus || publishPaymentStatus;
+  const createLockToken =
+    dependencies.createLockToken || (() => randomBytes(16).toString("hex"));
   const attemptReference = paymentAttemptId || kitchenOrderId;
   const attemptQuery = getAttemptQuery(orderId, paymentAttemptId);
-  const idempotencyKey = buildIdempotencyKey("easypaisa", orderId, attemptReference);
-  const now = clock.now();
+  const idempotencyKey = buildIdempotencyKey(
+    "easypaisa",
+    orderId,
+    attemptReference
+  );
+  const initiatedAt = clock.now();
   const lockToken = createLockToken();
-  const claim = await claimPaymentAttempt({
+  const claim = await claimAttempt({
     TransactionDb,
-    attemptQuery,
+    query: attemptQuery,
     idempotencyKey,
     amount,
-    submittedAmount: normalizedSubmittedAmount,
-    now,
-    lockTtlMs: config.lockTtlMs,
+    submittedAmount: submitted,
     lockToken,
+    now: initiatedAt,
+    lockTtlMs: config.lockTtlMs,
   });
 
   if (!claim.claimed) {
     return {
       status: claim.attempt?.status || PAYMENT_STATUS.PENDING,
       transactionId: claim.attempt?.transactionId || null,
+      isPaid: claim.attempt?.status === PAYMENT_STATUS.VERIFIED_PAID,
       idempotent: true,
       inProgress: !claim.terminal,
-      isPaid: claim.attempt?.status === PAYMENT_STATUS.VERIFIED_PAID,
     };
   }
 
-  await updateOrderPayment({
+  await persistOrder({
     OrdersDb,
     orderId,
+    amount,
     status: PAYMENT_STATUS.PENDING,
     isPaid: false,
-    amount,
-    initiatedAt: now,
-    now,
+    initiatedAt,
+    now: initiatedAt,
   });
-
   publishStatus({
     branchId: order.branchID,
     externalOrderId,
     orderId,
     status: PAYMENT_STATUS.PENDING,
     isPaid: false,
-    initiatedAt: now,
+    initiatedAt,
   });
 
-  const requestData = {
+  const request = {
     orderId: kitchenOrderId,
     storeId: config.storeId,
     transactionAmount: amount,
@@ -329,10 +313,11 @@ export async function initiateEasyPaisaPayment(params, dependencies = {}) {
     optional2: String(paymentAttemptId || ""),
   };
 
+  let response;
   try {
-    const response = await httpClient.post(
+    response = await httpClient.post(
       `${config.baseUrl}/initiate-ma-transaction`,
-      requestData,
+      request,
       {
         timeout: config.timeoutMs,
         maxRedirects: 0,
@@ -344,107 +329,86 @@ export async function initiateEasyPaisaPayment(params, dependencies = {}) {
         validateStatus: (status) => status >= 200 && status < 500,
       }
     );
-
-    const result = evaluateInitiationResponse(response.status, response.data);
-    const completedAt = clock.now();
-
-    await updateAttempt(
-      TransactionDb,
-      attemptQuery,
-      {
-        responseCode: result.responseCode,
-        responseMessage: result.responseMessage,
-        transactionId: result.transactionId,
-        transactionDateTime: result.transactionDateTime,
-        providerHttpStatus: response.status,
-        status: result.status,
-        isPaid: false,
-        lastResponseAt: completedAt,
-      },
-      lockToken,
-      completedAt
-    );
-
-    await updateOrderPayment({
-      OrdersDb,
-      orderId,
-      status: result.status,
-      isPaid: false,
-      amount,
-      transactionId: result.transactionId,
-      initiatedAt: now,
-      now: completedAt,
-    });
-
-    publishStatus({
-      branchId: order.branchID,
-      externalOrderId,
-      orderId,
-      status: result.status,
-      isPaid: false,
-      initiatedAt: now,
-    });
-
-    if (!result.accepted) {
-      throw new ReactionError("payment-failed", "EasyPaisa rejected the payment request");
-    }
-
-    return result;
   } catch (error) {
+    const now = clock.now();
     const uncertain = isUncertainProviderError(error);
     const status = uncertain
       ? PAYMENT_STATUS.PENDING_REVIEW
       : PAYMENT_STATUS.FAILED;
-    const failedAt = clock.now();
-
-    await updateAttempt(
+    await persistStatus({
       TransactionDb,
+      OrdersDb,
       attemptQuery,
-      {
-        status,
+      lockToken,
+      orderId,
+      amount,
+      status,
+      transactionId: null,
+      initiatedAt,
+      now,
+      attemptValues: {
         failureCode: error?.code || null,
         failureReason: uncertain
           ? "Provider result is unknown"
           : "Provider rejected the request",
-        lastErrorAt: failedAt,
+        lastErrorAt: now,
         nextReconciliationAt: uncertain
-          ? new Date(failedAt.getTime() + config.reconciliationDelayMs)
+          ? new Date(now.getTime() + config.reconciliationDelayMs)
           : null,
       },
-      lockToken,
-      failedAt
-    );
-
-    await updateOrderPayment({
-      OrdersDb,
-      orderId,
-      status,
-      isPaid: false,
-      amount,
-      initiatedAt: now,
-      now: failedAt,
     });
-
     publishStatus({
       branchId: order.branchID,
       externalOrderId,
       orderId,
       status,
       isPaid: false,
-      initiatedAt: now,
+      initiatedAt,
     });
-
     if (uncertain) {
-      return {
-        status,
-        isPaid: false,
-        pendingVerification: true,
-      };
+      return { status, isPaid: false, pendingVerification: true };
     }
-
-    if (error instanceof ReactionError) throw error;
     throw new ReactionError("payment-failed", "EasyPaisa rejected the payment request");
   }
+
+  const result = evaluateInitiationResponse(response.status, response.data);
+  const completedAt = clock.now();
+  await persistStatus({
+    TransactionDb,
+    OrdersDb,
+    attemptQuery,
+    lockToken,
+    orderId,
+    amount,
+    status: result.status,
+    transactionId: result.transactionId,
+    initiatedAt,
+    now: completedAt,
+    attemptValues: {
+      responseCode: result.responseCode,
+      responseMessage: result.responseMessage,
+      transactionId: result.transactionId,
+      transactionDateTime: result.transactionDateTime,
+      providerHttpStatus: response.status,
+      lastResponseAt: completedAt,
+      nextReconciliationAt: result.accepted
+        ? new Date(completedAt.getTime() + config.reconciliationDelayMs)
+        : null,
+    },
+  });
+  publishStatus({
+    branchId: order.branchID,
+    externalOrderId,
+    orderId,
+    status: result.status,
+    isPaid: false,
+    initiatedAt,
+  });
+
+  if (!result.accepted) {
+    throw new ReactionError("payment-failed", "EasyPaisa rejected the payment request");
+  }
+  return result;
 }
 
 export default function doEasyPaisaPayment(
@@ -476,3 +440,5 @@ export default function doEasyPaisaPayment(
     dependencies
   );
 }
+
+export { claimAttempt, getAttemptQuery, readConfiguration };
