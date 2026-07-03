@@ -2,6 +2,11 @@ import assert from "assert/strict";
 import { initiateEasyPaisaPayment } from "../src/util/easyPaisaPayment.js";
 import { PAYMENT_STATUS } from "../src/util/paymentStatus.js";
 import { InMemoryCollection } from "./support/inMemoryCollection.mjs";
+import { runPaymentCoreUnitTests } from "./paymentCore.unit.mjs";
+import { runEasyPaisaStatusIntegrationTests } from "./easypaisaStatus.integration.mjs";
+import { runCheckoutIdempotencyIntegrationTests } from "./checkoutIdempotency.integration.mjs";
+import { runReconciliationIntegrationTests } from "./reconciliation.integration.mjs";
+import { runPendingReconciliationTest } from "./reconciliation.pending.mjs";
 
 function fixedClock(...times) {
   let index = 0;
@@ -62,7 +67,7 @@ const config = {
   reconciliationDelayMs: 300000,
 };
 
-export async function testAcceptedInitiation() {
+async function testAcceptedInitiation() {
   const { OrdersDb, TransactionDb } = baseFixtures();
   const requests = [];
   const events = [];
@@ -113,7 +118,7 @@ export async function testAcceptedInitiation() {
   assert.equal(events.map((event) => event.status).join(","), "PENDING,PENDING_VERIFICATION");
 }
 
-export async function testTimeoutInitiation() {
+async function testTimeoutInitiation() {
   const { OrdersDb, TransactionDb } = baseFixtures();
   const result = await initiateEasyPaisaPayment(
     { ...params, OrdersDb, TransactionDb },
@@ -141,7 +146,7 @@ export async function testTimeoutInitiation() {
   assert.equal(attempt.nextReconciliationAt.toISOString(), "2026-07-03T10:07:10.000Z");
 }
 
-export async function testPaidIdempotency() {
+async function testPaidIdempotency() {
   const { OrdersDb, TransactionDb } = baseFixtures({
     status: PAYMENT_STATUS.VERIFIED_PAID,
     transactionId: "provider-paid",
@@ -166,7 +171,7 @@ export async function testPaidIdempotency() {
   assert.equal(providerCalls, 0);
 }
 
-export async function testConcurrentAttemptLock() {
+async function testConcurrentAttemptLock() {
   const { OrdersDb, TransactionDb } = baseFixtures({
     status: PAYMENT_STATUS.PENDING,
     processingLockToken: "other-worker",
@@ -192,7 +197,7 @@ export async function testConcurrentAttemptLock() {
   assert.equal(providerCalls, 0);
 }
 
-export async function testDeclinedInitiation() {
+async function testDeclinedInitiation() {
   const { OrdersDb, TransactionDb } = baseFixtures();
   await assert.rejects(
     () =>
@@ -233,4 +238,9 @@ export async function runEasyPaisaIntegrationTests() {
   await testPaidIdempotency();
   await testConcurrentAttemptLock();
   await testDeclinedInitiation();
+  await runPaymentCoreUnitTests();
+  await runEasyPaisaStatusIntegrationTests();
+  await runCheckoutIdempotencyIntegrationTests();
+  await runReconciliationIntegrationTests();
+  await runPendingReconciliationTest();
 }
