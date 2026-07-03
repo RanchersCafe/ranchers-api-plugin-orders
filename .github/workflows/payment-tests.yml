@@ -17,4 +17,12 @@ jobs:
           node-version: "18.20.8"
           cache: npm
       - run: npm install --no-audit --no-fund --silent
-      - run: node -e "import('./tests/easypaisa.integration.mjs').then(m => m.runEasyPaisaIntegrationTests())"
+      - id: payment_test
+        continue-on-error: true
+        run: node -e "import('./tests/easypaisa.integration.mjs').then(m => m.runEasyPaisaIntegrationTests())" > payment-test.log 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payment-test-diagnostics
+          path: payment-test.log
+      - if: steps.payment_test.outcome == 'failure'
+        run: cat payment-test.log && exit 1
