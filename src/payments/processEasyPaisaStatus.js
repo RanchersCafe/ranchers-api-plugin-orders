@@ -9,8 +9,10 @@ const { ObjectId } = mongodb;
 
 function transactionQuery(orderId, paymentAttemptId) {
   const query = { orderId };
-  if (paymentAttemptId && ObjectId.isValid(paymentAttemptId)) {
-    query._id = new ObjectId(paymentAttemptId);
+  if (paymentAttemptId) {
+    query._id = ObjectId.isValid(paymentAttemptId)
+      ? new ObjectId(paymentAttemptId)
+      : paymentAttemptId;
   }
   return query;
 }
