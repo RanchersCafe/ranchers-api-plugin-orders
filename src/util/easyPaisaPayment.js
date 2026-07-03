@@ -22,6 +22,14 @@ function normalizeAmount(value) {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
+function getOrderInvoiceTotal(order) {
+  const total = (order?.shipping || []).reduce(
+    (sum, group) => sum + Number(group?.invoice?.total || 0),
+    0
+  );
+  return normalizeAmount(total);
+}
+
 function getAttemptQuery(orderId, attemptId) {
   const query = { orderId };
   if (attemptId && ObjectId.isValid(attemptId)) query._id = new ObjectId(attemptId);
@@ -96,7 +104,8 @@ export default async function doEasyPaisaPayment(
     throw new ReactionError("not-found", "Order not found while initiating payment");
   }
 
-  const authoritativeAmount = normalizeAmount(order?.payments?.[0]?.finalAmount);
+  const authoritativeAmount =
+    getOrderInvoiceTotal(order) || normalizeAmount(order?.payments?.[0]?.finalAmount);
   if (authoritativeAmount === null) {
     throw new ReactionError("invalid-payment", "The order does not have a valid payable amount");
   }
