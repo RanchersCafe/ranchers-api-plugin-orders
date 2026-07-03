@@ -1,20 +1,11 @@
 import axios from "axios";
 import mongodb from "mongodb";
-import decodeOpaqueId from "@reactioncommerce/api-utils/decodeOpaqueId.js";
+import decodeOrderReference from "./decodeOrderReference.js";
 import { PAYMENT_STATUS } from "../util/paymentStatus.js";
 import { evaluateStatusResponse, validateStatusUrl } from "./easypaisaProtocol.js";
 import { getOrderInvoiceTotal } from "./paymentMath.js";
 
 const { ObjectId } = mongodb;
-
-function decodeOrderReference(value, decoder = decodeOpaqueId) {
-  if (!value) return null;
-  try {
-    return decoder(value)?.id || value;
-  } catch (error) {
-    return value;
-  }
-}
 
 function transactionQuery(orderId, paymentAttemptId) {
   const query = { orderId };
@@ -40,7 +31,7 @@ export async function processEasyPaisaStatus(
   const httpClient = dependencies.httpClient || axios;
   const clock = dependencies.clock || { now: () => new Date() };
   const publishStatus = dependencies.publishStatus || (() => {});
-  const decoder = dependencies.decodeOrderId || decodeOpaqueId;
+  const decoder = dependencies.decodeOrderId || decodeOrderReference;
   const timeoutMs = Number(dependencies.timeoutMs || 15000);
   const parsedUrl = validateStatusUrl(statusUrl, allowedHosts);
 
@@ -51,7 +42,7 @@ export async function processEasyPaisaStatus(
   const providerData = response?.data || {};
   const externalOrderId = providerData.optional1;
   const paymentAttemptId = providerData.optional2;
-  const orderId = decodeOrderReference(externalOrderId, decoder);
+  const orderId = decoder(externalOrderId);
 
   if (!orderId || !paymentAttemptId) {
     const error = new Error("Payment status is missing order references");
@@ -152,4 +143,4 @@ export async function processEasyPaisaStatus(
   };
 }
 
-export { decodeOrderReference };
+export { decodeOrderReference, transactionQuery };
