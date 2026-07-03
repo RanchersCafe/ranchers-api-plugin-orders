@@ -74,11 +74,16 @@ export function evaluateStatusResponse(data, expectedAmount) {
 }
 
 export function isUncertainProviderError(error) {
-  const errorName = error && error.constructor ? error.constructor.name : "";
-  if (errorName === "ReactionError") return false;
-  const code = error ? error.code : null;
+  const errorName = error?.name || error?.constructor?.name || "";
+  const isApplicationError =
+    errorName === "ReactionError" ||
+    typeof error?.error === "string" ||
+    typeof error?.reason === "string";
+  if (isApplicationError) return false;
+
+  const code = error?.code || null;
   return Boolean(
-    !(error && error.response) ||
+    !error?.response ||
       ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN"].includes(code)
   );
 }
