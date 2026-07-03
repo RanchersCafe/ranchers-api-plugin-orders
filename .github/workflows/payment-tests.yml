@@ -9,7 +9,7 @@ on:
 jobs:
   payment-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,9 +17,14 @@ jobs:
           node-version: "18.20.8"
           cache: npm
       - run: npm install --no-audit --no-fund --silent
+      - run: node --check src/index.js
+      - run: node --check src/mutations/placeOrderGuarded.js
+      - run: node --check src/util/easyPaisaPayment.js
+      - run: node --check src/payments/processEasyPaisaStatus.js
+      - run: node --check src/payments/reconcilePendingPayments.js
       - id: payment_test
         continue-on-error: true
-        run: node -e "import('./tests/easypaisa.integration.mjs').then(m => m.runEasyPaisaIntegrationTests())" > payment-test.log 2>&1
+        run: node tests/run.mjs > payment-test.log 2>&1
       - uses: actions/upload-artifact@v4
         with:
           name: payment-test-diagnostics
