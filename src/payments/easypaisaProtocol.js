@@ -60,7 +60,7 @@ export function evaluateStatusResponse(data, expectedAmount) {
     response.responseCode === "0000" &&
     Boolean(response.providerTransactionId);
 
-  let status = PAYMENT_STATUS.PENDING;
+  let status = PAYMENT_STATUS.PENDING_VERIFICATION;
   if (providerPaid && amountMatches) status = PAYMENT_STATUS.VERIFIED_PAID;
   else if (providerPaid) status = PAYMENT_STATUS.AMOUNT_MISMATCH;
   else if (TERMINAL_FAILURES.has(normalizedStatus)) status = normalizedStatus;
@@ -91,7 +91,12 @@ export function validateStatusUrl(value, allowedHosts) {
     throw new TypeError("Invalid payment status URL");
   }
   const hosts = Array.isArray(allowedHosts) ? allowedHosts : [];
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || !hosts.includes(parsed.hostname)) {
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    !hosts.includes(parsed.hostname)
+  ) {
     throw new TypeError("Payment status URL is not allowed");
   }
   return parsed;
