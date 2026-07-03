@@ -1,6 +1,7 @@
 import axios from "axios";
 import bodyParser from "body-parser";
 import { processEasyPaisaStatus } from "./processEasyPaisaStatus.js";
+import publishPaymentStatus from "./publishPaymentStatus.js";
 
 function csvEnvironment(name, fallback = []) {
   const value = process.env[name];
@@ -79,6 +80,7 @@ export default function registerPaymentRoutes(context) {
         },
         {
           timeoutMs: Number(process.env.EASYPAISA_TIMEOUT_MS || 15000),
+          publishStatus: publishPaymentStatus,
         }
       );
 
