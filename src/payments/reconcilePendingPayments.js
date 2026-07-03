@@ -21,6 +21,9 @@ async function persistOutcome({
   outcome,
   now,
 }) {
+  const reconciliationCount = (attempt.reconciliationCount || 0) + 1;
+  const shouldRetry = RECONCILABLE_STATUSES.includes(outcome.status);
+
   await TransactionDb.updateOne(
     { _id: attempt._id, status: { $in: RECONCILABLE_STATUSES } },
     {
@@ -35,7 +38,9 @@ async function persistOutcome({
         transactionDateTime: outcome.paidAt,
         lastVerifiedAt: now,
         updatedAt: now,
-        nextReconciliationAt: outcome.isPaid ? null : attempt.nextReconciliationAt,
+        nextReconciliationAt: shouldRetry
+          ? nextRetryAt(now, reconciliationCount)
+          : null,
       },
       $inc: { reconciliationCount: 1 },
     }
@@ -107,7 +112,10 @@ export async function reconcilePendingPayments({
           $set: {
             status: PAYMENT_STATUS.PENDING_REVIEW,
             failureReason: "Order not found during reconciliation",
-            nextReconciliationAt: nextRetryAt(startedAt, (attempt.reconciliationCount || 0) + 1),
+            nextReconciliationAt: nextRetryAt(
+              startedAt,
+              (attempt.reconciliationCount || 0) + 1
+            ),
             updatedAt: startedAt,
           },
           $inc: { reconciliationCount: 1 },
