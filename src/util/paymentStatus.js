@@ -8,6 +8,49 @@ export const PAYMENT_STATUS = Object.freeze({
   CANCELLED: "CANCELLED",
   EXPIRED: "EXPIRED",
   AMOUNT_MISMATCH: "AMOUNT_MISMATCH",
+  REFUNDED: "REFUNDED",
+});
+
+const TERMINAL_STATUSES = new Set([
+  PAYMENT_STATUS.VERIFIED_PAID,
+  PAYMENT_STATUS.FAILED,
+  PAYMENT_STATUS.CANCELLED,
+  PAYMENT_STATUS.EXPIRED,
+  PAYMENT_STATUS.AMOUNT_MISMATCH,
+  PAYMENT_STATUS.REFUNDED,
+]);
+
+const ALLOWED_TRANSITIONS = Object.freeze({
+  [PAYMENT_STATUS.CREATED]: new Set([
+    PAYMENT_STATUS.PENDING,
+    PAYMENT_STATUS.FAILED,
+  ]),
+  [PAYMENT_STATUS.PENDING]: new Set([
+    PAYMENT_STATUS.PENDING_VERIFICATION,
+    PAYMENT_STATUS.PENDING_REVIEW,
+    PAYMENT_STATUS.VERIFIED_PAID,
+    PAYMENT_STATUS.FAILED,
+    PAYMENT_STATUS.CANCELLED,
+    PAYMENT_STATUS.EXPIRED,
+    PAYMENT_STATUS.AMOUNT_MISMATCH,
+  ]),
+  [PAYMENT_STATUS.PENDING_VERIFICATION]: new Set([
+    PAYMENT_STATUS.PENDING_REVIEW,
+    PAYMENT_STATUS.VERIFIED_PAID,
+    PAYMENT_STATUS.FAILED,
+    PAYMENT_STATUS.CANCELLED,
+    PAYMENT_STATUS.EXPIRED,
+    PAYMENT_STATUS.AMOUNT_MISMATCH,
+  ]),
+  [PAYMENT_STATUS.PENDING_REVIEW]: new Set([
+    PAYMENT_STATUS.PENDING_VERIFICATION,
+    PAYMENT_STATUS.VERIFIED_PAID,
+    PAYMENT_STATUS.FAILED,
+    PAYMENT_STATUS.CANCELLED,
+    PAYMENT_STATUS.EXPIRED,
+    PAYMENT_STATUS.AMOUNT_MISMATCH,
+  ]),
+  [PAYMENT_STATUS.VERIFIED_PAID]: new Set([PAYMENT_STATUS.REFUNDED]),
 });
 
 export function isPaidStatus(status) {
@@ -15,11 +58,17 @@ export function isPaidStatus(status) {
 }
 
 export function isTerminalStatus(status) {
-  return [
-    PAYMENT_STATUS.VERIFIED_PAID,
-    PAYMENT_STATUS.FAILED,
-    PAYMENT_STATUS.CANCELLED,
-    PAYMENT_STATUS.EXPIRED,
-    PAYMENT_STATUS.AMOUNT_MISMATCH,
-  ].includes(status);
+  return TERMINAL_STATUSES.has(status);
+}
+
+export function canTransitionPaymentStatus(fromStatus, toStatus) {
+  if (!fromStatus || fromStatus === toStatus) return true;
+  return Boolean(ALLOWED_TRANSITIONS[fromStatus]?.has(toStatus));
+}
+
+export function assertPaymentStatusTransition(fromStatus, toStatus) {
+  if (!canTransitionPaymentStatus(fromStatus, toStatus)) {
+    throw new Error(`Invalid payment status transition: ${fromStatus} -> ${toStatus}`);
+  }
+  return toStatus;
 }
