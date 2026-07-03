@@ -8,8 +8,21 @@ import {
 } from "../src/orders/checkoutIdempotency.js";
 import { InMemoryCollection } from "./support/inMemoryCollection.mjs";
 
+class CheckoutCollection extends InMemoryCollection {
+  async insertOne(document) {
+    const existing = await this.findOne({ checkoutKey: document.checkoutKey });
+    if (existing) {
+      const error = new Error("checkout request already exists");
+      error.code = 11000;
+      throw error;
+    }
+    this.documents.push(document);
+    return { insertedId: document.checkoutKey };
+  }
+}
+
 export async function runCheckoutIdempotencyIntegrationTests() {
-  const collection = new InMemoryCollection();
+  const collection = new CheckoutCollection();
   const context = { userId: "user-1" };
   const input = { order: { shopId: "shop-1" } };
   const clientMutationId = normalizeClientMutationId("checkout-test-1");
@@ -56,7 +69,7 @@ export async function runCheckoutIdempotencyIntegrationTests() {
   assert.equal(replay.completed, true);
   assert.deepEqual(replay.record.orderIds, ["order-1"]);
 
-  const failedCollection = new InMemoryCollection();
+  const failedCollection = new CheckoutCollection();
   const failedKey = buildCheckoutKey(
     context,
     input,
