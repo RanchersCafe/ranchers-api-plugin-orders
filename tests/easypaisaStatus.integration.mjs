@@ -119,6 +119,26 @@ export async function runEasyPaisaStatusIntegrationTests() {
     await assert.rejects(
       () =>
         processEasyPaisaStatus(
+          { ...baseInput, OrdersDb, TransactionDb },
+          {
+            httpClient: providerClient({ optional2: "different-attempt" }),
+            decodeOrderId: () => ({ id: "order-status" }),
+          }
+        ),
+      /Payment attempt not found/
+    );
+
+    const order = await OrdersDb.findOne({ _id: "order-status" });
+    assert.equal(order.isPaid, false);
+    const attempt = await TransactionDb.findOne({ _id: "attempt-status" });
+    assert.equal(attempt.status, PAYMENT_STATUS.PENDING_VERIFICATION);
+  }
+
+  {
+    const { OrdersDb, TransactionDb } = createFixtures();
+    await assert.rejects(
+      () =>
+        processEasyPaisaStatus(
           {
             ...baseInput,
             statusUrl: "https://example.com/status/abc",
