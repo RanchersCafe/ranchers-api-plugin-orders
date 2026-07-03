@@ -71,8 +71,8 @@ export default async function doEasyPaisaPayment(
   TransactionDb,
   OrdersDb
 ) {
-  const amount = normalizeAmount(transactionAmount);
-  if (amount === null) {
+  const submittedAmount = normalizeAmount(transactionAmount);
+  if (submittedAmount === null) {
     throw new ReactionError("invalid-payment", "A valid transaction amount is required");
   }
   if (!mobileAccountNo) {
@@ -90,6 +90,18 @@ export default async function doEasyPaisaPayment(
   if (!lookupId) {
     throw new ReactionError("invalid-payment", "A valid order reference is required");
   }
+
+  const order = await OrdersDb.findOne({ _id: lookupId });
+  if (!order) {
+    throw new ReactionError("not-found", "Order not found while initiating payment");
+  }
+
+  const authoritativeAmount = normalizeAmount(order?.payments?.[0]?.finalAmount);
+  if (authoritativeAmount === null) {
+    throw new ReactionError("invalid-payment", "The order does not have a valid payable amount");
+  }
+  const amount = authoritativeAmount;
+  const submittedAmountMismatch = Math.abs(authoritativeAmount - submittedAmount) >= 0.01;
 
   const attemptQuery = getAttemptQuery(lookupId, transactionRecord);
   const existingAttempt = TransactionDb ? await TransactionDb.findOne(attemptQuery) : null;
@@ -131,6 +143,8 @@ export default async function doEasyPaisaPayment(
         $set: {
           idempotencyKey,
           amount,
+          submittedAmount,
+          submittedAmountMismatch,
           status: PAYMENT_STATUS.PENDING,
           provider: "EASYPAISA",
           initiatedAt,
@@ -150,14 +164,14 @@ export default async function doEasyPaisaPayment(
         isPaid: false,
         paymentInitiatedAt: initiatedAt,
         paymentAttemptId: transactionRecord ? String(transactionRecord) : null,
+        authoritativePaymentAmount: amount,
         updatedAt: initiatedAt,
       },
     }
   );
 
-  const order = await OrdersDb.findOne({ _id: lookupId });
   publishStatus({
-    branchId: order?.branchID,
+    branchId: order.branchID,
     externalOrderId: orderId,
     orderId: lookupId,
     status: PAYMENT_STATUS.PENDING,
@@ -226,7 +240,7 @@ export default async function doEasyPaisaPayment(
     );
 
     publishStatus({
-      branchId: order?.branchID,
+      branchId: order.branchID,
       externalOrderId: orderId,
       orderId: lookupId,
       status,
@@ -271,7 +285,7 @@ export default async function doEasyPaisaPayment(
     );
 
     publishStatus({
-      branchId: order?.branchID,
+      branchId: order.branchID,
       externalOrderId: orderId,
       orderId: lookupId,
       status,
