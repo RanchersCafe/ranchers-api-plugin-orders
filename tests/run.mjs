@@ -1,6 +1,7 @@
 import { runPaymentCoreUnitTests } from "./paymentCore.unit.mjs";
 import { runEasyPaisaIntegrationTests } from "./easypaisa.integration.mjs";
 import { runEasyPaisaStatusIntegrationTests } from "./easypaisaStatus.integration.mjs";
+import { runPlaceOrderGuardedIntegrationTests } from "./placeOrderGuarded.integration.mjs";
 import { runReconciliationIntegrationTests } from "./reconciliation.integration.mjs";
 import { runPendingReconciliationTest } from "./reconciliation.pending.mjs";
 
@@ -8,6 +9,7 @@ const suites = [
   ["payment core unit", runPaymentCoreUnitTests],
   ["Easypaisa initiation integration", runEasyPaisaIntegrationTests],
   ["Easypaisa status callback integration", runEasyPaisaStatusIntegrationTests],
+  ["guarded order integration", runPlaceOrderGuardedIntegrationTests],
   ["payment reconciliation integration", runReconciliationIntegrationTests],
   ["pending reconciliation retry", runPendingReconciliationTest],
 ];
