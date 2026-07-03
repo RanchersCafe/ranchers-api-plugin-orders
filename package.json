@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "engines": {
-    "node": ">=12.14.1"
+    "node": ">=14.18.1"
   },
   "homepage": "https://github.com/blackspider1994/api-plugin-orders",
   "url": "https://github.com/blackspider1994/api-plugin-orders",
@@ -30,9 +30,14 @@
     "@reactioncommerce/random": "^1.0.2",
     "@reactioncommerce/reaction-error": "^1.0.1",
     "accounting-js": "^1.1.1",
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
     "lodash": "^4.17.21",
-    "simpl-schema": "^1.5.9",
-    "node-fetch": "3.3.0"
+    "mongodb": "^3.7.4",
+    "morgan": "^1.10.0",
+    "node-fetch": "3.3.0",
+    "simpl-schema": "^1.5.9"
   },
   "devDependencies": {
     "@babel/core": "^7.7.7",
