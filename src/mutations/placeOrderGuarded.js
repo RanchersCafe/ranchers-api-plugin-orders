@@ -1,5 +1,4 @@
 import ReactionError from "@reactioncommerce/reaction-error";
-import legacyPlaceOrder from "./placeOrder.js";
 import {
   acquireCheckoutRequest,
   buildCheckoutKey,
@@ -24,10 +23,16 @@ async function loadExistingOrders(Orders, orderIds) {
   return Orders.find({ _id: { $in: orderIds } }).toArray();
 }
 
+async function resolvePlaceOrder(dependencies) {
+  if (dependencies.legacyPlaceOrder) return dependencies.legacyPlaceOrder;
+  const module = await import("./placeOrder.js");
+  return module.default;
+}
+
 export default async function placeOrderGuarded(context, input, dependencies = {}) {
   const clock = dependencies.clock || { now: () => new Date() };
-  const createLockToken = dependencies.createLockToken || (() => `${Date.now()}-${Math.random()}`);
-  const placeOrder = dependencies.legacyPlaceOrder || legacyPlaceOrder;
+  const createLockToken =
+    dependencies.createLockToken || (() => `${Date.now()}-${Math.random()}`);
   const clientMutationId = normalizeClientMutationId(input?.clientMutationId);
   const easyPaisa = isEasyPaisaOrder(input);
 
@@ -68,6 +73,7 @@ export default async function placeOrderGuarded(context, input, dependencies = {
   }
 
   try {
+    const placeOrder = await resolvePlaceOrder(dependencies);
     const result = await placeOrder(context, input);
     const now = clock.now();
     await Promise.all(
@@ -103,4 +109,4 @@ export default async function placeOrderGuarded(context, input, dependencies = {
   }
 }
 
-export { isEasyPaisaOrder, loadExistingOrders };
+export { isEasyPaisaOrder, loadExistingOrders, resolvePlaceOrder };
