@@ -1,10 +1,63 @@
-// const axios = require('axios');
 import axios from "axios";
 import ReactionError from "@reactioncommerce/reaction-error";
-import pkg from "mongodb";
-const { ObjectId } = pkg;
-import pubSub from "../util/pubSubIntance.js";
+import mongodb from "mongodb";
+import pubSub from "./pubSubIntance.js";
 import decodeOpaqueId from "@reactioncommerce/api-utils/decodeOpaqueId.js";
+import { PAYMENT_STATUS } from "./paymentStatus.js";
+
+const { ObjectId } = mongodb;
+
+function decodeOrderId(value) {
+  if (!value) return null;
+  try {
+    return decodeOpaqueId(value)?.id || value;
+  } catch (error) {
+    return value;
+  }
+}
+
+function normalizeAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function getAttemptQuery(orderId, attemptId) {
+  const query = { orderId };
+  if (attemptId && ObjectId.isValid(attemptId)) query._id = new ObjectId(attemptId);
+  return query;
+}
+
+function publishStatus({ branchId, externalOrderId, orderId, status, isPaid, initiatedAt }) {
+  const event = {
+    orderId,
+    paymentStatus: status,
+    updatedAt: new Date(),
+    paymentMethod: "EASYPAISA",
+    isPaid,
+    paymentInitiatedAt: initiatedAt,
+  };
+
+  if (branchId) {
+    pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${branchId}`, {
+      orderPaymentStatusUpdated: event,
+    });
+  }
+  if (externalOrderId) {
+    pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${externalOrderId}`, {
+      orderPaymentStatusUpdated: { ...event, orderId: externalOrderId },
+    });
+  }
+}
+
+function sanitizeResponse(data = {}) {
+  return {
+    responseCode: data.responseCode || null,
+    responseMessage: data.responseDesc || null,
+    transactionId: data.transactionId || null,
+    transactionDateTime: data.transactionDateTime || null,
+  };
+}
 
 export default async function doEasyPaisaPayment(
   kitchenOrderID,
@@ -14,167 +67,221 @@ export default async function doEasyPaisaPayment(
   transactionType,
   mobileAccountNo,
   emailAddress,
-  TransactionRecord,
+  transactionRecord,
   TransactionDb,
   OrdersDb
 ) {
+  const amount = normalizeAmount(transactionAmount);
+  if (amount === null) {
+    throw new ReactionError("invalid-payment", "A valid transaction amount is required");
+  }
+  if (!mobileAccountNo) {
+    throw new ReactionError("invalid-payment", "A mobile account number is required");
+  }
 
+  const providerAuthHeader = process.env.EASYPAISA_AUTH_HEADER;
+  const providerAuthValue = process.env.EASYPAISA_AUTH_VALUE;
+  const configuredStoreId = storeId || process.env.EASYPAISA_STORE_ID;
+  if (!providerAuthHeader || !providerAuthValue || !configuredStoreId) {
+    throw new ReactionError("payment-configuration", "The payment provider is not configured");
+  }
 
-  // Validate transaction amount
-  if (!transactionAmount || isNaN(transactionAmount) || transactionAmount <= 0) {
-    throw new ReactionError(
-      "invalid-payment",
-      "A valid transaction amount is required for EasyPaisa payments"
+  const lookupId = decodeOrderId(orderId);
+  if (!lookupId) {
+    throw new ReactionError("invalid-payment", "A valid order reference is required");
+  }
+
+  const attemptQuery = getAttemptQuery(lookupId, transactionRecord);
+  const existingAttempt = TransactionDb ? await TransactionDb.findOne(attemptQuery) : null;
+  if (existingAttempt?.status === PAYMENT_STATUS.VERIFIED_PAID) {
+    return {
+      status: existingAttempt.status,
+      transactionId: existingAttempt.transactionId,
+      idempotent: true,
+    };
+  }
+
+  const idempotencyKey = `easypaisa:${lookupId}:${String(transactionRecord || kitchenOrderID)}`;
+  const initiatedAt = new Date();
+  const timeout = Number.parseInt(process.env.EASYPAISA_TIMEOUT_MS || "15000", 10);
+  const baseUrl = (
+    process.env.EASYPAISA_BASE_URL ||
+    "https://easypay.easypaisa.com.pk/easypay-service/rest/v4"
+  ).replace(/\/$/, "");
+
+  const requestData = {
+    orderId: kitchenOrderID,
+    storeId: configuredStoreId,
+    transactionAmount:
+      ["development", "staging"].includes(process.env.ENVIRONMENT) &&
+      process.env.EASYPAISA_TEST_AMOUNT
+        ? normalizeAmount(process.env.EASYPAISA_TEST_AMOUNT)
+        : amount,
+    transactionType: transactionType || "MA",
+    mobileAccountNo,
+    emailAddress,
+    optional1: orderId,
+    optional2: String(transactionRecord),
+  };
+
+  if (TransactionDb) {
+    await TransactionDb.updateOne(
+      attemptQuery,
+      {
+        $set: {
+          idempotencyKey,
+          amount,
+          status: PAYMENT_STATUS.PENDING,
+          provider: "EASYPAISA",
+          initiatedAt,
+          lastAttemptAt: initiatedAt,
+          updatedAt: initiatedAt,
+        },
+        $inc: { attemptCount: 1 },
+      }
     );
   }
 
-  let data = JSON.stringify({
-    "orderId": kitchenOrderID || "abc123",
-    "storeId": storeId || process.env.EASYPAISASTOREID,
-    "transactionAmount": process.env.ENVIRONMENT == "development" || process.env.ENVIRONMENT == "staging" ? 1 : transactionAmount,
-    "transactionType": transactionType || "MA",
-    "mobileAccountNo": mobileAccountNo,
-    "emailAddress": emailAddress,
-    "optional1": orderId,
-    "optional2": TransactionRecord.toString(),
-  });
-  console.log("data ", data)
-  let config = {
-    method: 'post',
-    maxBodyLength: Infinity,
-    url: 'https://easypay.easypaisa.com.pk/easypay-service/rest/v4/initiate-ma-transaction',
-    headers: {
-      'Credentials': process.env.EASYPAISACREDENTIALS,
-      'Content-Type': 'application/json',
-      'Cookie': 'f5avraaaaaaaaaaaaaaaa_session_=HLMGKINDPKOJPKHOFEJMHOFEAPLIEDNBIFMADPFDMFDBKJMAKJPJNJDHBOMIFKDDNPJDBLJAELGDJNPNGKFAHGPIBDFNHNIPGPKKOPNLFAMPKIHGHMCEGFLIEIAJCECG; TS01f2a187=011c1a8db659dbb038859aba2f36856f49c5f911252f3f7aa8f963e626dc41fc3e6bf3995de8df0b30f8604415537bd0b25978dbb226ae694d9bffc43ef74feae68d5e4754; f5avraaaaaaaaaaaaaaaa_session_=DKJDJDGCAKOILNAIFIMBBPDNGBEELNCHEKICBGFHGICKPLHBPDALCJIMBPPODMIGGPFDJNOKBBCECALJIFOADBPJBCIJKCAHMDAOJGFAOIKNDBIADHNFAFCCEBAIOJHP; TS01f2a187=011c1a8db62ea093b93cb0f4b4084e8c77949764178c31e2d7b022ef68219ae814908501b769506889b7f1a1e288e8efe804be3e6a042c4ca76066fb41057d939d4f9f4cf4'
-    },
-    data: data
-  };
-  let decodedId;
-  try {
-    decodedId = decodeOpaqueId(orderId);
-  } catch (e) {
-    decodedId = null;
-  }
-  const lookupId = decodedId?.id || orderId;
-  const paymentInitiatedAt = new Date().toISOString()
-  const orderData = await OrdersDb.findOneAndUpdate(
-    { _id: lookupId },
-    { $set: { paymentStatus: "PENDING", isPaid: false, paymentInitiatedAt: paymentInitiatedAt } },
-    { new: true }
-  );
-  const branchId = orderData?.value?.branchID;
-  console.log("branch iD ", branchId);
-  if (branchId) {
-    console.log("Publishing to branch-specific channel:", `ORDER_PAYMENT_STATUS_UPDATED_${branchId}`);
-
-    pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${branchId}`, {
-      orderPaymentStatusUpdated: {
-        orderId: lookupId,
-        paymentStatus: "PENDING",
-        updatedAt: new Date(),
+  await OrdersDb.updateOne(
+    { _id: lookupId, isPaid: { $ne: true } },
+    {
+      $set: {
+        paymentStatus: PAYMENT_STATUS.PENDING,
         isPaid: false,
-        paymentMethod: "EASYPAISA",
-        paymentInitiatedAt: paymentInitiatedAt
-        
-      }
-    });
-  }
-  pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${orderId}`, {
-    orderPaymentStatusUpdated: {
-      orderId: orderId,
-      paymentStatus: "PENDING",
-      updatedAt: new Date(),
-        paymentMethod: "EASYPAISA",
-      isPaid: false,
-      paymentInitiatedAt: paymentInitiatedAt
+        paymentInitiatedAt: initiatedAt,
+        paymentAttemptId: transactionRecord ? String(transactionRecord) : null,
+        updatedAt: initiatedAt,
+      },
     }
+  );
+
+  const order = await OrdersDb.findOne({ _id: lookupId });
+  publishStatus({
+    branchId: order?.branchID,
+    externalOrderId: orderId,
+    orderId: lookupId,
+    status: PAYMENT_STATUS.PENDING,
+    isPaid: false,
+    initiatedAt,
   });
-  const response = await axios.request(config)
-    .then(async (response) => {
-      console.log("response of easypaisa", JSON.stringify(response.data));
 
-      // Update transaction in database
-      if (response.data && TransactionDb) {
-        try {
-          const { optional1, responseDesc, responseCode, transactionId, transactionDateTime, optional2 } = response.data; // Assuming optional1 contains the orderId
-
-          // First verify that this order actually exists
-          let decodedId;
-          try {
-            decodedId = decodeOpaqueId(optional1);
-          } catch (e) {
-            decodedId = null;
-          }
-          const lookupId = decodedId?.id || orderId;
-          await TransactionDb.updateOne(
-            { orderId: lookupId, _id: ObjectId(optional2) },
-            {
-              $set: {
-                raw: response.data,
-                responseMessage: responseDesc,
-                status: responseDesc,
-                responseCode: responseCode,
-                transactionId: transactionId,
-                updatedAt: new Date(),
-                transactionDateTime: transactionDateTime
-              }
-            }
-          );
-          const isSuccess = responseDesc === "SUCCESS" && responseCode === "0000";
-          try {
-            const orderObj = await OrdersDb.findOneAndUpdate(
-              { _id: lookupId },
-              {
-                $set: {
-                  isPaid: isSuccess,
-                  paymentStatus: isSuccess ? "SUCCESS" : "FAILED",
-                  transactionId: transactionId || null,
-                  updatedAt: new Date(),
-                },
-              },
-              { new: true }
-
-            );
-            const bId = orderObj?.value?.branchID;
-            if (bId) {
-              console.log("Publishing to branch-specific channel:", `ORDER_PAYMENT_STATUS_UPDATED_${bId}`);
-
-              pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${bId}`, {
-                orderPaymentStatusUpdated: {
-        paymentMethod: "EASYPAISA",
-                  orderId: lookupId,
-                  paymentStatus: isSuccess ? "SUCCESS" : "FAILED",
-                  updatedAt: new Date(),
-                  isPaid: isSuccess,
-                }
-              });
-            }
-
-            pubSub.publish(`ORDER_PAYMENT_STATUS_UPDATED_${optional1}`, {
-              orderPaymentStatusUpdated: {
-                orderId: optional1,
-                paymentStatus: isSuccess ? "SUCCESS" : "FAILED",
-        paymentMethod: "EASYPAISA",
-                updatedAt: new Date(),
-                isPaid: isSuccess,
-              }
-            });
-            console.log(`Order ${lookupId} updated from EasyPaisa response with status ${responseDesc}`);
-          } catch (orderUpdateError) {
-            console.error("Error updating order from EasyPaisa response:", orderUpdateError.message);
-          }
-          console.log("Transaction updated in database successfully");
-        } catch (dbError) {
-          console.error("Error updating transaction in database:", dbError);
-        }
-      }
-
-      return response.data;
-    })
-    .catch((error) => {
-      console.log("error of easypaisa ", error);
-      return false
+  try {
+    const response = await axios.post(`${baseUrl}/initiate-ma-transaction`, requestData, {
+      timeout: Number.isNaN(timeout) ? 15000 : timeout,
+      maxRedirects: 0,
+      headers: {
+        [providerAuthHeader]: providerAuthValue,
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey,
+      },
+      validateStatus: (status) => status >= 200 && status < 500,
     });
-  return response
+
+    const providerResponse = sanitizeResponse(response.data);
+    const providerSuccess =
+      response.status >= 200 &&
+      response.status < 300 &&
+      providerResponse.responseCode === "0000" &&
+      String(providerResponse.responseMessage || "").toUpperCase() === "SUCCESS" &&
+      Boolean(providerResponse.transactionId);
+    const trustInitiateResponse = process.env.EASYPAISA_TRUST_INITIATE_RESPONSE === "true";
+
+    let status = PAYMENT_STATUS.FAILED;
+    let isPaid = false;
+    if (providerSuccess && trustInitiateResponse) {
+      status = PAYMENT_STATUS.VERIFIED_PAID;
+      isPaid = true;
+    } else if (providerSuccess) {
+      status = PAYMENT_STATUS.PENDING_VERIFICATION;
+    }
+
+    if (TransactionDb) {
+      await TransactionDb.updateOne(
+        attemptQuery,
+        {
+          $set: {
+            ...providerResponse,
+            providerHttpStatus: response.status,
+            providerStatus: providerResponse.responseMessage,
+            status,
+            isPaid,
+            lastResponseAt: new Date(),
+            updatedAt: new Date(),
+          },
+        }
+      );
+    }
+
+    await OrdersDb.updateOne(
+      { _id: lookupId, isPaid: { $ne: true } },
+      {
+        $set: {
+          isPaid,
+          paymentStatus: status,
+          transactionId: providerResponse.transactionId,
+          paymentVerifiedAt: isPaid ? new Date() : null,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    publishStatus({
+      branchId: order?.branchID,
+      externalOrderId: orderId,
+      orderId: lookupId,
+      status,
+      isPaid,
+      initiatedAt,
+    });
+
+    return { ...providerResponse, status, isPaid };
+  } catch (error) {
+    const uncertainOutcome =
+      error.code === "ECONNABORTED" ||
+      error.code === "ETIMEDOUT" ||
+      error.code === "ECONNRESET" ||
+      !error.response;
+    const status = uncertainOutcome
+      ? PAYMENT_STATUS.PENDING_REVIEW
+      : PAYMENT_STATUS.FAILED;
+
+    if (TransactionDb) {
+      await TransactionDb.updateOne(
+        attemptQuery,
+        {
+          $set: {
+            status,
+            failureCode: error.code || null,
+            failureReason: uncertainOutcome
+              ? "Provider result is unknown"
+              : "Provider rejected the request",
+            lastErrorAt: new Date(),
+            nextReconciliationAt: uncertainOutcome
+              ? new Date(Date.now() + 5 * 60 * 1000)
+              : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    }
+
+    await OrdersDb.updateOne(
+      { _id: lookupId, isPaid: { $ne: true } },
+      { $set: { isPaid: false, paymentStatus: status, updatedAt: new Date() } }
+    );
+
+    publishStatus({
+      branchId: order?.branchID,
+      externalOrderId: orderId,
+      orderId: lookupId,
+      status,
+      isPaid: false,
+      initiatedAt,
+    });
+
+    if (uncertainOutcome) {
+      return { status, isPaid: false, pendingVerification: true };
+    }
+    throw new ReactionError("payment-failed", "The payment provider rejected the request");
+  }
 }
