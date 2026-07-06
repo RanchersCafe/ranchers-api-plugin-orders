@@ -1,0 +1,33 @@
+import { runPaymentCoreUnitTests } from "./paymentCore.unit.mjs";
+import { runEasyPaisaIntegrationTests } from "./easypaisa.integration.mjs";
+import { runEasyPaisaStatusIntegrationTests } from "./easypaisaStatus.integration.mjs";
+import { runPlaceOrderGuardedIntegrationTests } from "./placeOrderGuarded.integration.mjs";
+import { runReconciliationIntegrationTests } from "./reconciliation.integration.mjs";
+import { runPendingReconciliationTest } from "./reconciliation.pending.mjs";
+
+const suites = [
+  ["payment core unit", runPaymentCoreUnitTests],
+  ["Easypaisa initiation integration", runEasyPaisaIntegrationTests],
+  ["Easypaisa status callback integration", runEasyPaisaStatusIntegrationTests],
+  ["guarded order integration", runPlaceOrderGuardedIntegrationTests],
+  ["payment reconciliation integration", runReconciliationIntegrationTests],
+  ["pending reconciliation retry", runPendingReconciliationTest],
+];
+
+let failures = 0;
+for (const [name, run] of suites) {
+  try {
+    await run();
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failures += 1;
+    console.error(`FAIL ${name}`);
+    console.error(error?.stack || error);
+  }
+}
+
+if (failures > 0) {
+  process.exitCode = 1;
+} else {
+  console.log(`PASS all ${suites.length} payment test suites`);
+}

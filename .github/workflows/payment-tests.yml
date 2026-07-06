@@ -1,0 +1,33 @@
+name: Payment Tests
+
+on:
+  push:
+    branches:
+      - codex/checkout-payment-hardening
+  pull_request:
+
+jobs:
+  payment-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.8"
+          cache: npm
+      - run: npm install --no-audit --no-fund --silent
+      - run: node --check src/index.js
+      - run: node --check src/mutations/placeOrderGuarded.js
+      - run: node --check src/util/easyPaisaPayment.js
+      - run: node --check src/payments/processEasyPaisaStatus.js
+      - run: node --check src/payments/reconcilePendingPayments.js
+      - id: payment_test
+        continue-on-error: true
+        run: node tests/run.mjs > payment-test.log 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payment-test-diagnostics
+          path: payment-test.log
+      - if: steps.payment_test.outcome == 'failure'
+        run: cat payment-test.log && exit 1
