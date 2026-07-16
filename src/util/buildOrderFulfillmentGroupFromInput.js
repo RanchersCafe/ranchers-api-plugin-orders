@@ -39,7 +39,6 @@ export default async function buildOrderFulfillmentGroupFromInput(
     totalPrice: expectedGroupTotal,
     type,
   } = inputGroup;
-  console.log("items in buildOrderFulfillmentGroupFromInput ",items)
 
   const group = {
     _id: Random.id(),
@@ -48,37 +47,33 @@ export default async function buildOrderFulfillmentGroupFromInput(
     type,
     workflow: { status: "new", workflow: ["new"] },
   };
-  console.log("group in start of buildOrder ",group)
-  console.log("additionalItems ",additionalItems)
 
-  // Build the final order item objects. As part of this, we look up the variant in the system and make sure that
-  // the price is what the caller expects it to be.
+  // Build the final order item objects. As part of this, the current variant
+  // and price are loaded from the server-side catalogue.
   if (items) {
     group.items = await Promise.all(
       items.map((inputItem) =>
-        buildOrderItem(context, { currencyCode, inputItem, cart ,type})
+        buildOrderItem(context, {
+          currencyCode,
+          inputItem,
+          cart,
+          type,
+        })
       )
     );
-    console.log("group in after group.items = await Promise.all ",group)
-
   } else {
     group.items = [];
   }
-  console.log("group in after if (items) { ",group)
 
   if (Array.isArray(additionalItems) && additionalItems.length) {
     group.items.push(...additionalItems);
   }
-  console.log("group after array.isArray ",group)
 
-  // Add some more properties for convenience
   group.itemIds = group.items.map((item) => item._id);
-  console.log("group in after group.itemIds ",group)
   group.totalItemQuantity = group.items.reduce(
     (sum, item) => sum + item.quantity,
     0
   );
-  console.log("group in after group.totalItemQuantity ",group)
 
   const { groupSurcharges, groupSurchargeTotal, taxableAmount, taxTotal } =
     await updateGroupTotals(context, {
@@ -92,7 +87,6 @@ export default async function buildOrderFulfillmentGroupFromInput(
       orderId,
       selectedFulfillmentMethodId,
     });
-    console.log("group in buildOrder ",group)
 
   return {
     group,
