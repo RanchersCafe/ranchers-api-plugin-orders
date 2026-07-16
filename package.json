@@ -70,8 +70,8 @@
   "scripts": {
     "lint": "npm run lint:eslint",
     "lint:eslint": "eslint .",
-    "prepare": "node scripts/hardenPlaceOrderSource.mjs --write && node tests/placeOrderSecurity.unit.mjs",
-    "check:security": "node scripts/hardenPlaceOrderSource.mjs && node tests/placeOrderSecurity.unit.mjs",
+    "prepare": "node scripts/hardenPlaceOrderSource.mjs --write && node tests/placeOrderSecurity.unit.mjs && node tests/serverPaymentSnapshot.unit.mjs",
+    "check:security": "node scripts/hardenPlaceOrderSource.mjs && node tests/placeOrderSecurity.unit.mjs && node tests/serverPaymentSnapshot.unit.mjs",
     "test": "jest",
     "test:payments": "node tests/run.mjs",
     "test:watch": "jest --watch",
