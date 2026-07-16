@@ -25,8 +25,6 @@ import pubSub from "../util/pubSubIntance.js";
 // import { PubSub } from "graphql-subscriptions";
 // const pubSub = new PubSub();
 
-const GUEST_TOKEN =
-  "4fca69b380be5f9898f435e548654c063f757562ca32fb9e5d09bb5d38d3295b";
 const DEAL_TAG_ID = "QxJefMA3viGnquk6Y";
 
 const inputSchema = new SimpleSchema({
@@ -289,10 +287,16 @@ export default async function placeOrder(context, input) {
     if (!isGuestUser) {
       throw new ReactionError("access-denied", "User or guest access required");
     }
-    if (isGuestUser && (!guestToken || guestToken !== GUEST_TOKEN)) {
+    const configuredGuestToken = String(
+      process.env.GUEST_CHECKOUT_TOKEN || ""
+    ).trim();
+    if (
+      isGuestUser &&
+      (!configuredGuestToken || !guestToken || guestToken !== configuredGuestToken)
+    ) {
       throw new ReactionError(
         "access-denied",
-        "Guest token required for guest users"
+        "Guest checkout is not configured or the guest token is invalid"
       );
     }
   }
@@ -489,7 +493,6 @@ export default async function placeOrder(context, input) {
   };
 
 
-  console.log("ORDER RECORD", order)
 
   if (fullToken) {
     const dbToken = { ...fullToken };
@@ -576,11 +579,9 @@ export default async function placeOrder(context, input) {
     }
 
     Transaction.insertOne(transactionRecordObj).then((result) => {
-      console.log("TRANSACTION RECORD in Place Order", result?.insertedId);
 
       doEasyPaisaPayment(kitchenOrderID, opaqueOrderId, null, payments[0].finalAmount - discountTotal, null, jazzCashNumber, email,result?.insertedId, Transaction, Orders)
         .then((response) => {
-          console.log("easyPaisaResponse in place order", response)
         })
         .catch((error) => {
           Logger.error("Error processing EasyPaisa payment or inserting transaction record:", error)
