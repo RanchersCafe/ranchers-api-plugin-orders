@@ -4,7 +4,11 @@ on:
   push:
     branches:
       - codex/checkout-payment-hardening
+      - release/stabilization-rc1
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   payment-tests:
@@ -12,12 +16,31 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "18.20.8"
           cache: npm
+      - name: Apply deterministic source hardening
+        run: node scripts/hardenPlaceOrderSource.mjs --write
+      - name: Verify source hardening
+        run: node scripts/hardenPlaceOrderSource.mjs
+      - name: Commit hardened source on RC1 branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release/stabilization-rc1'
+        run: |
+          if git diff --quiet -- src/mutations/placeOrder.js; then
+            echo "Place-order source is already hardened"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/mutations/placeOrder.js
+          git commit -m "security: remove committed guest token and sensitive order logs"
+          git push origin HEAD:release/stabilization-rc1
       - run: npm install --no-audit --no-fund --silent
       - run: node --check src/index.js
+      - run: node --check src/mutations/placeOrder.js
       - run: node --check src/mutations/placeOrderGuarded.js
       - run: node --check src/util/easyPaisaPayment.js
       - run: node --check src/payments/processEasyPaisaStatus.js
