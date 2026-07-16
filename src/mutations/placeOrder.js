@@ -6,7 +6,10 @@ import Random from "@reactioncommerce/random";
 import ReactionError from "@reactioncommerce/reaction-error";
 import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";
 import buildOrderFulfillmentGroupFromInput from "../util/buildOrderFulfillmentGroupFromInput.js";
-import verifyPaymentsMatchOrderTotal from "../util/verifyPaymentsMatchOrderTotal.js";
+import {
+  allocateServerPaymentSnapshots,
+  summarizeFulfillmentGroups,
+} from "../payments/serverPaymentSnapshot.js";
 import doEasyPaisaPayment from "../util/easyPaisaPayment.js";
 import sendOrderEmail from "../util/sendOrderEmail.js";
 import encodeOpaqueId from "@reactioncommerce/api-utils/encodeOpaqueId.js";
@@ -49,81 +52,58 @@ const inputSchema = new SimpleSchema({
  * @param {String} shop shop that owns the order
  * @returns {Object[]} Array of created payments
  */
-async function
-  createPayments({
-    accountId,
-    billingAddress,
-    context,
-    currencyCode,
-    email,
-    orderTotal,
-    paymentsInput,
-    shippingAddress,
-    shop,
-    taxPercentage,
-    fulfillmentType,
-    fulfillmentGroups,
-    discountTotal
-  }) {
-
-  // Determining which payment methods are enabled for the shop
+async function createPayments({
+  accountId,
+  billingAddress,
+  context,
+  currencyCode,
+  email,
+  paymentsInput,
+  pricingSnapshot,
+  shippingAddress,
+  shop,
+}) {
   const availablePaymentMethods = shop.availablePaymentMethods || [];
 
-  // Calculate total amount from items
-  const totalAmount = fulfillmentGroups.reduce((sum, group) => {
-    return sum + group.items.reduce((itemSum, item) => {
-      return itemSum + (item.price * item.quantity);
-    }, 0);
-  }, 0);
+  let serverPaymentInputs;
+  try {
+    serverPaymentInputs = allocateServerPaymentSnapshots(
+      paymentsInput || [],
+      pricingSnapshot,
+    );
+  } catch (error) {
+    throw new ReactionError("payment-failed", error.message);
+  }
 
-  // Calculate tax based on totalAmount and taxPercentage
-  const tax = Math.round(totalAmount * (taxPercentage / 100));
-
-  // Calculate amount (totalAmount + tax)
-  const amount = totalAmount + tax;
-
-  // Create authorized payments for each
-  const paymentPromises = (paymentsInput || []).map(async (paymentInput) => {
+  const paymentPromises = serverPaymentInputs.map(async (serverPaymentInput) => {
     const {
-      method: methodName
-    } = paymentInput;
+      paymentInput,
+      amount,
+      tax,
+      totalAmount,
+      finalAmount,
+    } = serverPaymentInput;
+    const { method: methodName } = paymentInput;
 
-    // Calculate finalAmount based on fulfillment type
-    let finalAmount;
-    if (fulfillmentType === "shipping") {
-      if (shop?.deliveryCharges == null || shop?.deliveryCharges == undefined) {
-        throw new ReactionError(
-          "payment-failed",
-          `Missing key deliveryCharges in shop Object`
-        );
-      }
-      finalAmount = amount + parseInt(shop?.deliveryCharges); // Adding delivery fee of 50 for shipping
-    } else {
-      finalAmount = amount; // Just totalAmount + tax for pickup
-    }
-
-    // Verify that this payment method is enabled for the shop
     if (!availablePaymentMethods.includes(methodName)) {
       throw new ReactionError(
         "payment-failed",
-        `Payment method not enabled for this shop: ${methodName}`
+        `Payment method not enabled for this shop: ${methodName}`,
       );
     }
 
-    // Grab config for this payment method
     let paymentMethodConfig;
     try {
       paymentMethodConfig =
         context.queries.getPaymentMethodConfigByName(methodName);
     } catch (error) {
-      Logger.error(error);
+      Logger.error(error.message);
       throw new ReactionError(
         "payment-failed",
-        `Invalid payment method name: ${methodName}`
+        `Invalid payment method name: ${methodName}`,
       );
     }
 
-    // Authorize this payment
     const payment = await paymentMethodConfig.functions.createAuthorizedPayment(
       context,
       {
@@ -140,47 +120,33 @@ async function
         paymentData: {
           ...(paymentInput.data || {}),
         },
-      }
+      },
     );
+
     const paymentWithCurrency = {
       ...payment,
-      // This is from previous support for exchange rates, which was removed in v3.0.0
       currency: { exchangeRate: 1, userCurrency: currencyCode },
       currencyCode,
+      amount,
+      tax,
+      totalAmount,
       finalAmount,
     };
 
-    // For EASYPAISA payments, ensure finalAmount is properly set (commented out as per user request)
-    // if (methodName === "easypaisa" && (!paymentWithCurrency.finalAmount || paymentWithCurrency.finalAmount <= 0)) {
-    //   if (paymentWithCurrency.totalAmount > 0) {
-    //     paymentWithCurrency.finalAmount = paymentWithCurrency.totalAmount;
-    //   } else if (paymentWithCurrency.amount > 0) {
-    //     paymentWithCurrency.finalAmount = paymentWithCurrency.amount;
-    //   } else {
-    //     throw new ReactionError(
-    //       "payment-invalid",
-    //       "Cannot determine payment amount for EasyPaisa payment"
-    //     );
-    //   }
-    // }
-
     PaymentSchema.validate(paymentWithCurrency);
-
     return paymentWithCurrency;
   });
 
-  let payments;
   try {
-    payments = await Promise.all(paymentPromises);
-    payments = payments.filter((payment) => !!payment); // remove nulls
+    const payments = await Promise.all(paymentPromises);
+    return payments.filter(Boolean);
   } catch (error) {
-    Logger.error("createOrder: error creating payments", error);
+    Logger.error("createOrder: error creating payments", error.message);
     throw new ReactionError(
       "payment-failed",
-      `There was a problem authorizing this payment: ${error.message}`
+      `There was a problem authorizing this payment: ${error.message}`,
     );
   }
-  return payments;
 }
 
 /**
@@ -427,25 +393,31 @@ export default async function placeOrder(context, input) {
     })
   );
 
+  const paymentPricingSnapshot = summarizeFulfillmentGroups(
+    finalFulfillmentGroups,
+  );
+  if (Math.abs(paymentPricingSnapshot.finalAmount - orderTotal) > 0.01) {
+    throw new ReactionError(
+      "invalid-order",
+      "Server order totals are inconsistent",
+    );
+  }
+
   const payments = await createPayments({
     accountId,
     billingAddress,
     context,
     currencyCode,
     email,
-    orderTotal,
     paymentsInput,
+    pricingSnapshot: paymentPricingSnapshot,
     shippingAddress: shippingAddressForPayments,
     shop,
-    taxPercentage,
-    fulfillmentType: fulfillmentGroups[0]?.type,
-    fulfillmentGroups,
-    discountTotal
   });
-  if (payments[0].totalAmount < 500) {
+  if (paymentPricingSnapshot.merchandiseAfterDiscount < 500) {
     throw new ReactionError(
       "invalid-order",
-      "Order amount must be greater than 500"
+      "Order merchandise amount must be at least 500",
     );
   }
 
@@ -569,7 +541,7 @@ export default async function placeOrder(context, input) {
       email,
       responseCode: "NA",
       responseMessage: "NA",
-      amount: payments[0].finalAmount - discountTotal,
+      amount: payments[0].finalAmount,
       status: "PENDING",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -580,7 +552,7 @@ export default async function placeOrder(context, input) {
 
     Transaction.insertOne(transactionRecordObj).then((result) => {
 
-      doEasyPaisaPayment(kitchenOrderID, opaqueOrderId, null, payments[0].finalAmount - discountTotal, null, jazzCashNumber, email,result?.insertedId, Transaction, Orders)
+      doEasyPaisaPayment(kitchenOrderID, opaqueOrderId, null, payments[0].finalAmount, null, jazzCashNumber, email,result?.insertedId, Transaction, Orders)
         .then((response) => {
         })
         .catch((error) => {
@@ -687,7 +659,7 @@ export default async function placeOrder(context, input) {
     },
     {
       $addFields: {
-        isPaid: { $cond: [{ $eq: ["$paymentMethod", "EASYPAISA"] }, true, false] }, // for easyPaisa payment method, we are not marking it as paid as user pays to rider on delviery
+        isPaid: { $ifNull: ["$isPaid", false] },
         isGuestUser: { $cond: [{ $eq: ["$accountId", null] }, true, false] },
       },
     },
@@ -835,7 +807,7 @@ export default async function placeOrder(context, input) {
     orderId,
     branchID,
     branchData,
-    fulfillmentGroups,
+    fulfillmentGroups: finalFulfillmentGroups,
     generatedID,
   });
 
