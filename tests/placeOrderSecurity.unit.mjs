@@ -20,15 +20,25 @@ assert.doesNotMatch(
   /const\s+GUEST_TOKEN\s*=|4fca69b380be5f9898f435e548654c063f757562ca32fb9e5d09bb5d38d3295b/,
   "Guest checkout credentials must not be committed in source",
 );
-assert.match(
+assert.doesNotMatch(
   placeOrderSource,
-  /process\.env\.GUEST_CHECKOUT_TOKEN/,
-  "Guest checkout must use protected runtime configuration",
+  /process\.env\.GUEST_CHECKOUT_TOKEN|configuredGuestToken/,
+  "Guest checkout must not depend on a shared browser-visible token",
 );
 assert.match(
   placeOrderSource,
-  /!configuredGuestToken\s*\|\|\s*!guestToken\s*\|\|\s*guestToken\s*!==\s*configuredGuestToken/,
-  "Guest checkout must fail closed when configuration or the supplied token is missing",
+  /getHashedAnonymousAccessToken/,
+  "Guest checkout must hash the cart-specific anonymous token",
+);
+assert.match(
+  placeOrderSource,
+  /cart\.anonymousAccessToken\.hashedToken\s*!==\s*hashedCartToken\.hashedToken/,
+  "Guest checkout must verify the submitted token against the selected cart",
+);
+assert.match(
+  placeOrderSource,
+  /The authenticated account does not own this cart/,
+  "Authenticated checkout must enforce cart ownership",
 );
 
 assert.match(
@@ -85,4 +95,4 @@ assert.doesNotMatch(
   "Fulfillment-group construction must not log customer, cart, address, item, or pricing data",
 );
 
-console.log("PASS place-order security and pricing regression tests");
+console.log("PASS place-order ownership, security and pricing regression tests");
