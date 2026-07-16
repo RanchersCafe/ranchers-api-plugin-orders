@@ -6,23 +6,22 @@ const sourcePath = new URL("../src/mutations/placeOrder.js", import.meta.url);
 const original = await readFile(sourcePath, "utf8");
 let hardened = original;
 
-function replaceExactly(search, replacement, description) {
+function replaceOnceIfPresent(search, replacement, description) {
   const occurrences = hardened.split(search).length - 1;
-  assert.equal(
-    occurrences,
-    1,
-    `${description}: expected exactly one source occurrence, found ${occurrences}`,
+  assert.ok(
+    occurrences <= 1,
+    `${description}: expected no more than one source occurrence, found ${occurrences}`,
   );
-  hardened = hardened.replace(search, replacement);
+  if (occurrences === 1) hardened = hardened.replace(search, replacement);
 }
 
-replaceExactly(
+replaceOnceIfPresent(
   'const GUEST_TOKEN =\n  "4fca69b380be5f9898f435e548654c063f757562ca32fb9e5d09bb5d38d3295b";\n',
   "",
   "remove committed guest token",
 );
 
-replaceExactly(
+replaceOnceIfPresent(
   `    if (isGuestUser && (!guestToken || guestToken !== GUEST_TOKEN)) {\n      throw new ReactionError(\n        "access-denied",\n        "Guest token required for guest users"\n      );\n    }\n`,
   `    const configuredGuestToken = String(\n      process.env.GUEST_CHECKOUT_TOKEN || ""\n    ).trim();\n    if (\n      isGuestUser &&\n      (!configuredGuestToken || !guestToken || guestToken !== configuredGuestToken)\n    ) {\n      throw new ReactionError(\n        "access-denied",\n        "Guest checkout is not configured or the guest token is invalid"\n      );\n    }\n`,
   "replace hardcoded guest-token validation",
@@ -39,7 +38,7 @@ for (const [search, description] of [
     "remove payment-provider response logging",
   ],
 ]) {
-  replaceExactly(search, "", description);
+  replaceOnceIfPresent(search, "", description);
 }
 
 assert.doesNotMatch(
@@ -47,6 +46,10 @@ assert.doesNotMatch(
   /const\s+GUEST_TOKEN\s*=|4fca69b380be5f9898f435e548654c063f757562ca32fb9e5d09bb5d38d3295b/,
 );
 assert.match(hardened, /process\.env\.GUEST_CHECKOUT_TOKEN/);
+assert.match(
+  hardened,
+  /!configuredGuestToken\s*\|\|\s*!guestToken\s*\|\|\s*guestToken\s*!==\s*configuredGuestToken/,
+);
 assert.doesNotMatch(hardened, /console\.log\(["']ORDER RECORD/);
 assert.doesNotMatch(hardened, /console\.log\(["']easyPaisaResponse/);
 assert.doesNotMatch(hardened, /console\.log\(["']TRANSACTION RECORD/);
