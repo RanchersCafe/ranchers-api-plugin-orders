@@ -23,9 +23,13 @@ jobs:
           node-version: "18.20.8"
           cache: npm
       - name: Apply deterministic source hardening
-        run: node scripts/hardenPlaceOrderSource.mjs --write
+        run: |
+          node scripts/hardenPlaceOrderSource.mjs --write
+          node scripts/enforceCartOwnershipSource.mjs --write
       - name: Verify source hardening
-        run: node scripts/hardenPlaceOrderSource.mjs
+        run: |
+          node scripts/hardenPlaceOrderSource.mjs
+          node scripts/enforceCartOwnershipSource.mjs
       - name: Verify security and pricing regression controls
         run: |
           node tests/placeOrderSecurity.unit.mjs
@@ -40,7 +44,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/mutations/placeOrder.js
-          git commit -m "fix(payments): enforce server-authoritative order pricing"
+          git commit -m "security: enforce cart-specific checkout ownership"
           git push origin HEAD:release/stabilization-rc1
       - run: npm install --no-audit --no-fund --silent
       - run: node --check src/index.js
