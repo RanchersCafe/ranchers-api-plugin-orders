@@ -26,8 +26,10 @@ jobs:
         run: node scripts/hardenPlaceOrderSource.mjs --write
       - name: Verify source hardening
         run: node scripts/hardenPlaceOrderSource.mjs
-      - name: Verify security regression controls
-        run: node tests/placeOrderSecurity.unit.mjs
+      - name: Verify security and pricing regression controls
+        run: |
+          node tests/placeOrderSecurity.unit.mjs
+          node tests/serverPaymentSnapshot.unit.mjs
       - name: Commit hardened source on RC1 branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/release/stabilization-rc1'
         run: |
@@ -38,12 +40,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/mutations/placeOrder.js
-          git commit -m "security: remove committed guest token and sensitive order logs"
+          git commit -m "fix(payments): enforce server-authoritative order pricing"
           git push origin HEAD:release/stabilization-rc1
       - run: npm install --no-audit --no-fund --silent
       - run: node --check src/index.js
       - run: node --check src/mutations/placeOrder.js
       - run: node --check src/mutations/placeOrderGuarded.js
+      - run: node --check src/payments/serverPaymentSnapshot.js
       - run: node --check src/util/easyPaisaPayment.js
       - run: node --check src/payments/processEasyPaisaStatus.js
       - run: node --check src/payments/reconcilePendingPayments.js
