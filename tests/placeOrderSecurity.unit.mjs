@@ -31,6 +31,42 @@ assert.match(
   "Guest checkout must fail closed when configuration or the supplied token is missing",
 );
 
+assert.match(
+  placeOrderSource,
+  /summarizeFulfillmentGroups\(\s*finalFulfillmentGroups/s,
+  "Payment pricing must be summarized from server-built fulfillment groups",
+);
+assert.match(
+  placeOrderSource,
+  /allocateServerPaymentSnapshots/,
+  "Payment authorization must use server-allocated payment snapshots",
+);
+assert.match(
+  placeOrderSource,
+  /pricingSnapshot:\s*paymentPricingSnapshot/,
+  "Server pricing snapshot must be passed into payment authorization",
+);
+assert.match(
+  placeOrderSource,
+  /merchandiseAfterDiscount\s*<\s*500/,
+  "Minimum order value must use the server-calculated merchandise amount",
+);
+assert.doesNotMatch(
+  placeOrderSource,
+  /payments\[0\]\.finalAmount\s*-\s*discountTotal/,
+  "EasyPaisa amount must not subtract an already-applied discount twice",
+);
+assert.doesNotMatch(
+  placeOrderSource,
+  /isPaid:\s*\{\s*\$cond:\s*\[\{\s*\$eq:\s*\["\$paymentMethod",\s*"EASYPAISA"\]/,
+  "New EasyPaisa orders must not be published as paid before provider verification",
+);
+assert.match(
+  placeOrderSource,
+  /fulfillmentGroups:\s*finalFulfillmentGroups/,
+  "Order-created events must contain server-built fulfillment groups",
+);
+
 for (const pattern of [
   /console\.log\(["']ORDER RECORD/,
   /console\.log\(["']TRANSACTION RECORD/,
@@ -49,4 +85,4 @@ assert.doesNotMatch(
   "Fulfillment-group construction must not log customer, cart, address, item, or pricing data",
 );
 
-console.log("PASS place-order source security regression tests");
+console.log("PASS place-order security and pricing regression tests");
