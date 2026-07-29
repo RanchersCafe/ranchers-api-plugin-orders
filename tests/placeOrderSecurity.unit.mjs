@@ -1,6 +1,7 @@
-import assert from "assert/strict";
+import assertModule from "assert";
 import { readFile } from "fs/promises";
 
+const assert = assertModule.strict;
 const [placeOrderSource, fulfillmentGroupSource] = await Promise.all([
   readFile(
     new URL("../src/mutations/placeOrder.js", import.meta.url),
