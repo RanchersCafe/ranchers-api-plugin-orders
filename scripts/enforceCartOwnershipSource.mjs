@@ -34,13 +34,20 @@ replaceOnceIfPresent(
   "clarify guest cart credential error",
 );
 
-const legacyCartLookup = `  let cart = null;\n  if (cartId) {\n    cart = await Cart.findOne({ _id: cartId });\n  }\n`;
 const protectedCartLookup = `  if (!cartId) {\n    throw new ReactionError("invalid-parameter", "Cart ID is required");\n  }\n\n  const cart = await Cart.findOne({ _id: cartId });\n  if (!cart) {\n    throw new ReactionError("not-found", "Cart not found");\n  }\n\n  if (isGuestUser) {\n    const hashedCartToken = getHashedAnonymousAccessToken(guestToken);\n    if (\n      !cart.anonymousAccessToken ||\n      cart.anonymousAccessToken.hashedToken !== hashedCartToken.hashedToken\n    ) {\n      throw new ReactionError(\n        "access-denied",\n        "Anonymous cart credentials are invalid",\n      );\n    }\n  } else if (String(cart.accountId || "") !== String(accountId || "")) {\n    throw new ReactionError(\n      "access-denied",\n      "The authenticated account does not own this cart",\n    );\n  }\n`;
-replaceOnceIfPresent(
-  legacyCartLookup,
-  protectedCartLookup,
-  "replace unprotected cart lookup",
-);
+
+for (const [legacyCartLookup, description] of [
+  [
+    `  let cart = null;\n  if (cartId) {\n    cart = await Cart.findOne({ _id: cartId });\n  }\n`,
+    "replace simple unprotected cart lookup",
+  ],
+  [
+    `  let cart;\n  if (cartId) {\n    //console.log("cartId ", cartId)\n    cart = await Cart.findOne({ _id: cartId });\n    //console.log("cart ",cart)\n    // await\n    if (!cart) {\n      throw new ReactionError(\n        "not-found",\n        "Cart not found while trying to place order"\n      );\n    }\n  }\n`,
+    "replace current unprotected cart lookup",
+  ],
+]) {
+  replaceOnceIfPresent(legacyCartLookup, protectedCartLookup, description);
+}
 
 assert.match(secured, /getHashedAnonymousAccessToken/);
 assert.match(
@@ -52,7 +59,7 @@ assert.doesNotMatch(secured, /process\.env\.GUEST_CHECKOUT_TOKEN/);
 assert.doesNotMatch(secured, /configuredGuestToken/);
 assert.doesNotMatch(
   secured,
-  /let cart = null;\s*if \(cartId\) \{\s*cart = await Cart\.findOne/s,
+  /let cart(?: = null)?;\s*if \(cartId\) \{[\s\S]*Cart\.findOne/,
 );
 
 if (writeMode) {
