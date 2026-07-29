@@ -1,6 +1,7 @@
-import assert from "assert/strict";
+import assertModule from "assert";
 import { readFile, writeFile } from "fs/promises";
 
+const assert = assertModule.strict;
 const writeMode = process.argv.includes("--write");
 const sourcePath = new URL("../src/mutations/placeOrder.js", import.meta.url);
 const original = await readFile(sourcePath, "utf8");
