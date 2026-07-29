@@ -1,10 +1,11 @@
-import assert from "assert/strict";
+import assertModule from "assert";
 import {
   allocateServerPaymentSnapshots,
   summarizeFulfillmentGroups,
   verifyPaymentPreview,
 } from "../src/payments/serverPaymentSnapshot.js";
 
+const assert = assertModule.strict;
 const summary = summarizeFulfillmentGroups([
   {
     invoice: {
