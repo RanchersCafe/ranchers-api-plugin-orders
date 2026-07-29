@@ -16,11 +16,13 @@ function replaceOnceIfPresent(search, replacement, description) {
   if (occurrences === 1) secured = secured.replace(search, replacement);
 }
 
-replaceOnceIfPresent(
-  'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\n',
-  'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\nimport getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";\n',
-  "add anonymous cart token hashing",
-);
+if (!secured.includes("getHashedAnonymousAccessToken")) {
+  replaceOnceIfPresent(
+    'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\n',
+    'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\nimport getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";\n',
+    "add anonymous cart token hashing",
+  );
+}
 
 replaceOnceIfPresent(
   `    const configuredGuestToken = String(\n      process.env.GUEST_CHECKOUT_TOKEN || ""\n    ).trim();\n    if (\n      isGuestUser &&\n      (!configuredGuestToken || !guestToken || guestToken !== configuredGuestToken)\n    ) {\n      throw new ReactionError(\n        "access-denied",\n        "Guest checkout is not configured or the guest token is invalid"\n      );\n    }\n`,
