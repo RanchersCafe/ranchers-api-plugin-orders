@@ -5,6 +5,7 @@ import Logger from "@reactioncommerce/logger";
 import Random from "@reactioncommerce/random";
 import ReactionError from "@reactioncommerce/reaction-error";
 import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";
+import getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";
 import buildOrderFulfillmentGroupFromInput from "../util/buildOrderFulfillmentGroupFromInput.js";
 import {
   allocateServerPaymentSnapshots,
@@ -253,32 +254,33 @@ export default async function placeOrder(context, input) {
     if (!isGuestUser) {
       throw new ReactionError("access-denied", "User or guest access required");
     }
-    const configuredGuestToken = String(
-      process.env.GUEST_CHECKOUT_TOKEN || ""
-    ).trim();
+  }
+
+  if (!cartId) {
+    throw new ReactionError("invalid-parameter", "Cart ID is required");
+  }
+
+  const cart = await Cart.findOne({ _id: cartId });
+  if (!cart) {
+    throw new ReactionError("not-found", "Cart not found");
+  }
+
+  if (isGuestUser) {
+    const hashedCartToken = getHashedAnonymousAccessToken(guestToken);
     if (
-      isGuestUser &&
-      (!configuredGuestToken || !guestToken || guestToken !== configuredGuestToken)
+      !cart.anonymousAccessToken ||
+      cart.anonymousAccessToken.hashedToken !== hashedCartToken.hashedToken
     ) {
       throw new ReactionError(
         "access-denied",
-        "Guest checkout is not configured or the guest token is invalid"
+        "Anonymous cart credentials are invalid",
       );
     }
-  }
-
-  let cart;
-  if (cartId) {
-    //console.log("cartId ", cartId)
-    cart = await Cart.findOne({ _id: cartId });
-    //console.log("cart ",cart)
-    // await
-    if (!cart) {
-      throw new ReactionError(
-        "not-found",
-        "Cart not found while trying to place order"
-      );
-    }
+  } else if (String(cart.accountId || "") !== String(accountId || "")) {
+    throw new ReactionError(
+      "access-denied",
+      "The authenticated account does not own this cart",
+    );
   }
   // We are mixing concerns a bit here for now. This is for backwards compatibility with current
   // discount codes feature. We are planning to revamp discounts soon, but until then, we'll look up
