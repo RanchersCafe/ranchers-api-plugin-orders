@@ -30,10 +30,11 @@ jobs:
         run: |
           node scripts/hardenPlaceOrderSource.mjs
           node scripts/enforceCartOwnershipSource.mjs
-      - name: Verify security and pricing regression controls
+      - name: Verify security, pricing, and GraphQL checkout regression controls
         run: |
           node tests/placeOrderSecurity.unit.mjs
           node tests/serverPaymentSnapshot.unit.mjs
+          node tests/orderCustomFieldsGraphqlContract.unit.mjs
       - name: Commit hardened source on RC1 branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/release/stabilization-rc1'
         run: |
