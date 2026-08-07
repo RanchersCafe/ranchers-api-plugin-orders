@@ -878,6 +878,12 @@ input OrderFulfillmentGroupExistingOrderInput {
   type: FulfillmentType!
 }
 
+"Approved custom order fields accepted during checkout"
+input OrderCustomFieldsInput {
+  "IANA time-zone identifier used for time-based pricing/discount evaluation"
+  timeZone: String
+}
+
 "Input for placing an order"
 input OrderInput {
   """
@@ -890,6 +896,9 @@ input OrderInput {
 
   "The code for the currency in which all values are being provided"
   currencyCode: String!
+
+  "Approved custom checkout fields used by Ranchers order processing"
+  customFields: OrderCustomFieldsInput
 
   """
   An email address to use for order tracking and correspondence. If a logged in user is placing an order,
