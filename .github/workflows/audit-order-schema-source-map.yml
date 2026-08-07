@@ -1,0 +1,35 @@
+name: Audit order schema source map
+
+on:
+  push:
+    branches:
+      - fix/rc1-order-custom-fields-schema
+  pull_request:
+    branches:
+      - release/stabilization-rc1
+
+permissions:
+  contents: read
+
+jobs:
+  source-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate OrderInput and Order schema definitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '# Files containing OrderInput / PlaceOrderInput / customFields'
+            git grep -n -E 'input[[:space:]]+OrderInput|PlaceOrderInput|customFields|type[[:space:]]+Order' -- '*.graphql' '*.gql' '*.js' '*.mjs' '*.ts' || true
+            echo
+            echo '# GraphQL files'
+            find src -type f \( -name '*.graphql' -o -name '*.gql' \) -print | sort
+          } > order-schema-source-map.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: order-schema-source-map
+          path: order-schema-source-map.txt
+          if-no-files-found: error
+          retention-days: 14
