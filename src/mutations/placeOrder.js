@@ -5,7 +5,7 @@ import Logger from "@reactioncommerce/logger";
 import Random from "@reactioncommerce/random";
 import ReactionError from "@reactioncommerce/reaction-error";
 import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";
-import getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";
+import hashToken from "@reactioncommerce/api-utils/hashToken.js";
 import buildOrderFulfillmentGroupFromInput from "../util/buildOrderFulfillmentGroupFromInput.js";
 import {
   allocateServerPaymentSnapshots,
@@ -266,10 +266,11 @@ export default async function placeOrder(context, input) {
   }
 
   if (isGuestUser) {
-    const hashedCartToken = getHashedAnonymousAccessToken(guestToken);
+    const hashedCartToken = guestToken ? hashToken(guestToken) : null;
     if (
+      !hashedCartToken ||
       !cart.anonymousAccessToken ||
-      cart.anonymousAccessToken.hashedToken !== hashedCartToken.hashedToken
+      cart.anonymousAccessToken !== hashedCartToken
     ) {
       throw new ReactionError(
         "access-denied",

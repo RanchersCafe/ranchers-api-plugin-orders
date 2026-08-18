@@ -891,6 +891,9 @@ input OrderInput {
   "The code for the currency in which all values are being provided"
   currencyCode: String!
 
+  "Arbitrary order metadata used by checkout and server-side order transforms"
+  customFields: JSONObject
+
   """
   An email address to use for order tracking and correspondence. If a logged in user is placing an order,
   we recommend that you use their "orders" email address, if they have one, or their default email address.

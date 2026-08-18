@@ -16,10 +16,16 @@ function replaceOnceIfPresent(search, replacement, description) {
   if (occurrences === 1) secured = secured.replace(search, replacement);
 }
 
-if (!secured.includes("getHashedAnonymousAccessToken")) {
+replaceOnceIfPresent(
+  'import getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";\n',
+  'import hashToken from "@reactioncommerce/api-utils/hashToken.js";\n',
+  "replace unavailable anonymous cart token helper",
+);
+
+if (!secured.includes('import hashToken from "@reactioncommerce/api-utils/hashToken.js";')) {
   replaceOnceIfPresent(
     'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\n',
-    'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\nimport getHashedAnonymousAccessToken from "@reactioncommerce/api-utils/getHashedAnonymousAccessToken.js";\n',
+    'import getAnonymousAccessToken from "@reactioncommerce/api-utils/getAnonymousAccessToken.js";\nimport hashToken from "@reactioncommerce/api-utils/hashToken.js";\n',
     "add anonymous cart token hashing",
   );
 }
@@ -36,7 +42,7 @@ replaceOnceIfPresent(
   "clarify guest cart credential error",
 );
 
-const protectedCartLookup = `  if (!cartId) {\n    throw new ReactionError("invalid-parameter", "Cart ID is required");\n  }\n\n  const cart = await Cart.findOne({ _id: cartId });\n  if (!cart) {\n    throw new ReactionError("not-found", "Cart not found");\n  }\n\n  if (isGuestUser) {\n    const hashedCartToken = getHashedAnonymousAccessToken(guestToken);\n    if (\n      !cart.anonymousAccessToken ||\n      cart.anonymousAccessToken.hashedToken !== hashedCartToken.hashedToken\n    ) {\n      throw new ReactionError(\n        "access-denied",\n        "Anonymous cart credentials are invalid",\n      );\n    }\n  } else if (String(cart.accountId || "") !== String(accountId || "")) {\n    throw new ReactionError(\n      "access-denied",\n      "The authenticated account does not own this cart",\n    );\n  }\n`;
+const protectedCartLookup = `  if (!cartId) {\n    throw new ReactionError("invalid-parameter", "Cart ID is required");\n  }\n\n  const cart = await Cart.findOne({ _id: cartId });\n  if (!cart) {\n    throw new ReactionError("not-found", "Cart not found");\n  }\n\n  if (isGuestUser) {\n    const hashedCartToken = guestToken ? hashToken(guestToken) : null;\n    if (\n      !hashedCartToken ||\n      !cart.anonymousAccessToken ||\n      cart.anonymousAccessToken !== hashedCartToken\n    ) {\n      throw new ReactionError(\n        "access-denied",\n        "Anonymous cart credentials are invalid",\n      );\n    }\n  } else if (String(cart.accountId || "") !== String(accountId || "")) {\n    throw new ReactionError(\n      "access-denied",\n      "The authenticated account does not own this cart",\n    );\n  }\n`;
 
 for (const [legacyCartLookup, description] of [
   [
@@ -51,10 +57,11 @@ for (const [legacyCartLookup, description] of [
   replaceOnceIfPresent(legacyCartLookup, protectedCartLookup, description);
 }
 
-assert.match(secured, /getHashedAnonymousAccessToken/);
+assert.match(secured, /hashToken/);
+assert.doesNotMatch(secured, /getHashedAnonymousAccessToken/);
 assert.match(
   secured,
-  /cart\.anonymousAccessToken\.hashedToken\s*!==\s*hashedCartToken\.hashedToken/,
+  /cart\.anonymousAccessToken\s*!==\s*hashedCartToken/,
 );
 assert.match(secured, /The authenticated account does not own this cart/);
 assert.doesNotMatch(secured, /process\.env\.GUEST_CHECKOUT_TOKEN/);

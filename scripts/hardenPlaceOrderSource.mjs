@@ -101,7 +101,7 @@ assert.doesNotMatch(
 );
 
 const usesCartSpecificOwnership =
-  /getHashedAnonymousAccessToken/.test(hardened) &&
+  /hashToken/.test(hardened) &&
   /Anonymous cart credentials are invalid/.test(hardened);
 if (usesCartSpecificOwnership) {
   assert.doesNotMatch(

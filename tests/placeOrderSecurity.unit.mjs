@@ -2,7 +2,12 @@ import assertModule from "assert";
 import { readFile } from "fs/promises";
 
 const assert = assertModule.strict;
-const [placeOrderSource, fulfillmentGroupSource] = await Promise.all([
+const [
+  placeOrderSource,
+  fulfillmentGroupSource,
+  orderGraphqlSchema,
+  simpleSchemasSource,
+] = await Promise.all([
   readFile(
     new URL("../src/mutations/placeOrder.js", import.meta.url),
     "utf8",
@@ -12,6 +17,14 @@ const [placeOrderSource, fulfillmentGroupSource] = await Promise.all([
       "../src/util/buildOrderFulfillmentGroupFromInput.js",
       import.meta.url,
     ),
+    "utf8",
+  ),
+  readFile(
+    new URL("../src/schemas/schema.graphql", import.meta.url),
+    "utf8",
+  ),
+  readFile(
+    new URL("../src/simpleSchemas.js", import.meta.url),
     "utf8",
   ),
 ]);
@@ -28,13 +41,18 @@ assert.doesNotMatch(
 );
 assert.match(
   placeOrderSource,
-  /getHashedAnonymousAccessToken/,
+  /hashToken/,
   "Guest checkout must hash the cart-specific anonymous token",
+);
+assert.doesNotMatch(
+  placeOrderSource,
+  /getHashedAnonymousAccessToken/,
+  "Guest checkout must not call the nonexistent getHashedAnonymousAccessToken helper",
 );
 assert.match(
   placeOrderSource,
-  /cart\.anonymousAccessToken\.hashedToken\s*!==\s*hashedCartToken\.hashedToken/,
-  "Guest checkout must verify the submitted token against the selected cart",
+  /cart\.anonymousAccessToken\s*!==\s*hashedCartToken/,
+  "Guest checkout must compare the submitted token hash with the cart hash string",
 );
 assert.match(
   placeOrderSource,
@@ -42,6 +60,17 @@ assert.match(
   "Authenticated checkout must enforce cart ownership",
 );
 
+
+assert.match(
+  orderGraphqlSchema,
+  /input OrderInput\s*\{[\s\S]*?\bcustomFields:\s*JSONObject\b/,
+  "GraphQL OrderInput must accept customFields as JSONObject",
+);
+assert.match(
+  simpleSchemasSource,
+  /export const orderInputSchema = new SimpleSchema\(\{[\s\S]*?customFields:\s*\{[\s\S]*?blackbox:\s*true/,
+  "Order input SimpleSchema must continue accepting blackbox customFields",
+);
 assert.match(
   placeOrderSource,
   /summarizeFulfillmentGroups\(\s*finalFulfillmentGroups/s,
